@@ -1,5 +1,9 @@
 # ── 数据库本体：不入仓（单库 68 MB–1.7 GB）──────────────────
-data/
+# 必须写成 /data/（带前导斜杠，只锚定仓库根）。写成 data/ 时 git 会按任意层级
+# 匹配，会把 xinmatch/core/db/data/atomic_scattering_params.json 一并忽略掉 ——
+# 那是 peak_compute 唯一读取的 Cromer-Mann 系数表，缺了它建库会「跑完但峰全丢」
+# （每文件抛 RuntimeError 被 worker 吞掉）。已踩过一次，勿改回。
+/data/
 *.xinDB
 *.xinDB-wal
 *.xinDB-shm
