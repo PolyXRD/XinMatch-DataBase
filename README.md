@@ -107,7 +107,8 @@ pip install numpy gemmi
 代码不下载数据。链路是：**原始归档 → 无机子集 → `.xinDB`**。
 
 **源数据不在本仓库**，2026-10-23 起统一放在 `D:/Project/XRD/sync-COD`（与
-[PolyXRD-DataBase](https://github.com/PolyXRD/PolyXRD-DataBase) 共用）：
+[PolyXRD-DataBase](https://github.com/PolyXRD/PolyXRD-DataBase) 共用，
+数据侧工具与布局说明见 [PolyXRD/sync-COD](https://github.com/PolyXRD/sync-COD)）：
 
 ```
 D:/Project/XRD/sync-COD/       ← 数据根，可用环境变量 XRD_DATA_ROOT 覆盖
@@ -252,3 +253,4 @@ python -m tools.validate_xindb PCOD-Inorg-20261020.xinDB --json out.json
 | 2026-10-23 | 本仓库建立并发布 `20261020` release（代码 + 三个 zip）；COD 库 `journal_mode` 由 WAL 归一为 DELETE，`integrity_check` 复核通过 |
 | 2026-10-23 | 三个库从 `PolyXRD-DataBase/xindb/` 迁到本仓库 `data/`；补入无机分类（①）与两份专项复核（④）工具，链路自足 |
 | 2026-10-23 | **源数据迁出** → `D:/Project/XRD/sync-COD`（两库共用），`XRD_DATA_ROOT` 缺省改为该路径；`build_dbs.py` 剥成纯函数模块 `cif_common.py`（旧 3COD sqlite 打包器删除） |
+| 2026-10-23 | 数据侧工具独立成公开仓库 [**PolyXRD/sync-COD**](https://github.com/PolyXRD/sync-COD)（数据仍不入库） |
