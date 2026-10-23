@@ -34,6 +34,9 @@ unzip COD-Inorg-20261020.xinDB.zip                    # 得到 COD-Inorg-2026102
 python -m tools.validate_xindb COD-Inorg-20261020.xinDB   # 可选：自检 25 项
 ```
 
+> 本机已把三个库放在仓库的 `data/` 下（`data/COD-Inorg-20261020.xinDB` 等，不入 git），
+> XinMatch 的库注册表 `~/.xinmatch/libraries.json` 已指向该目录。
+
 > ⚠️ 文件名必须是 `<library_kind>-<data_date>.xinDB`，否则 `validate_xindb` 的
 > `M3.identity` 会判 FAIL（它拿文件名和 `meta` 对账）。改名后重新建库即可，不必修 meta。
 
@@ -99,21 +102,28 @@ CuKa1-1.5406-d0.7703-30.0-merge-mult-DW-norm1000
 pip install numpy gemmi
 ```
 
-### 3.2 CIF 归档布局
+### 3.2 CIF 归档与无机子集
 
-代码不下载数据。三个库分别对应**无机子集**归档（`inorg_cif/` 是 PolyXRD-DataBase 里
-按"不含 C，或含 C 但不含 H"筛出来的副本，与本仓库解耦、可放在任意位置）：
+代码不下载数据。链路是：**原始归档 → 无机子集 → `.xinDB`**。
 
 ```
 <data-root>/
-├── inorg_cif/COD/      # 必需（--source COD）
-├── inorg_cif/PCOD/     # 必需（--source PCOD）
-└── inorg_cif/TCOD/     # 必需（--source TCOD）
+├── COD/  PCOD/  TCOD/          # 原始归档（层级 3 / 2 / 3，脚本按此解析 id）
+├── inorg_cif/COD|PCOD|TCOD/    # ← 第 ① 步产物：判为无机的 CIF 副本
+└── inorg_manifest.sqlite       # ← 第 ① 步产物：每文件一行清单
 ```
 
-默认路径写在 `xinmatch/core/db/cif_scan.py` 的 `DEFAULT_INORG_*_ROOT`（原作者的
-`D:\Project\XRD\PolyXRD-DataBase\inorg_cif\*`）。**换机器用 `--cif-root` 指过去**，
-不必改代码。
+第 ① 步（无机判定 = "不含 C，或含 C 但不含 H" + 复制 + 清单）：
+
+```bash
+XRD_DATA_ROOT=D:/Project/XRD/PolyXRD-DataBase python tools/scan_inorg.py --workers 6
+```
+
+- 判据、id 偏移（PCOD +2e7 / TCOD +1e8）与本仓库已发布的三库**逐条一致**（脚本原样沿用）。
+- 已发布库用的 `inorg_cif/` 现状就在 `D:\Project\XRD\PolyXRD-DataBase\inorg_cif\`（1,188,103 个 CIF，
+  与 polyDB 共用）。本仓库不带这批数据，也不必带 —— 只读引用即可。
+- 建库时 `--cif-root` 缺省指向 `xinmatch/core/db/cif_scan.py` 的 `DEFAULT_INORG_*_ROOT`
+  （原作者的 `D:\Project\XRD\PolyXRD-DataBase\inorg_cif\*`）。**换机器用 `--cif-root` 指过去**，不必改代码。
 
 ### 3.3 建库
 
@@ -165,12 +175,17 @@ python -m tools.validate_xindb PCOD-Inorg-20261020.xinDB --json out.json
 另做 SQLite `PRAGMA integrity_check` = ok、`entries` 行数与 `meta.entry_count` 逐库相符、
 `element_inv` 覆盖元素数与 `entries.elements` 实际元素集合完全一致（缺失 0）。
 
+发布前另可跑两份专项复核：`_compare_xindb_peaks.py`（逐 `peak_chunks` 行比对 BLOB 摘要，
+证明"只改元数据没动物理"）与 `_verify_resume_equivalence.py`（证明 `--resume` 等价于一次跑完）。
+
 ---
 
 ## 5. 目录结构
 
 ```
 .
+├── _atomic_scattering_params.json Cromer-Mann 系数（fastxrd 按 tools/../ 找它）
+├── data/                          **本地产物目录**（不入仓）：三个 .xinDB + _backup/
 ├── xinmatch/                      **构库子集**（完整程序见 PolyXRD/XinMatch）
 │   ├── __init__.py                空壳，避免把 scipy/GUI 拖进构建链路
 │   └── core/db/
@@ -180,10 +195,15 @@ python -m tools.validate_xindb PCOD-Inorg-20261020.xinDB --json out.json
 │       ├── schema_v3.py           v3 DDL / 必需表 / 必需 meta 键
 │       ├── writer_v3.py           分块列式写入器 + element_inv 重建
 │       └── data/atomic_scattering_params.json   Cromer-Mann 系数（99 元素）
-├── tools/
-│   ├── build_cod_inorg_xindb.py   三库无机子集构建入口（**主入口**）
-│   ├── build_cod_xindb.py         底层构建器（build() / 断点续跑 / 记账）
-│   └── validate_xindb.py          只读验收器（S/M/C/E/P/X 六组）
+├── tools/                         四步链路，索引见 tools/README.md
+│   ├── scan_inorg.py              ① 无机分类 + 副本 + 清单（XRD_DATA_ROOT 决定根目录）
+│   ├── build_dbs.py               ① 的判据实现（parse_elements / is_inorganic）
+│   ├── fastcif.py  fastxrd.py     ① 依赖的 CIF 解析 / 反射计算
+│   ├── build_cod_inorg_xindb.py   ② 三库构建入口（**主入口**）
+│   ├── build_cod_xindb.py         ② 底层构建器（分块写入 / 断点续跑 / 记账）
+│   ├── validate_xindb.py          ③ 只读验收器（S/M/C/E/P/X 六组）
+│   ├── _compare_xindb_peaks.py    ④ 峰载荷逐块比对（证明只改元数据没动物理）
+│   └── _verify_resume_equivalence.py ④ 证明 --resume 等价于一次跑完
 └── docs/
     └── xinDB格式规范-v3.md        字段级规范（容器/寻址/各段/meta/校验）
 ```
@@ -192,6 +212,8 @@ python -m tools.validate_xindb PCOD-Inorg-20261020.xinDB --json out.json
 （完整版会 `import scipy` 等，构库不需要）。其余检索/精修/GUI 模块见完整版仓库。
 
 不入仓（`.gitignore`）：`data/ *.xinDB *.db *.sqlite _release/ __pycache__/`。
+本机 `data/` 里放着三个已发布库（118.7 MB / 1.78 GB / 71.4 MB）与 `_backup/`
+（COD 库改 meta 之前的两个历史副本，各 118 MB，确认无用可直接删）。
 
 ---
 
@@ -223,3 +245,4 @@ python -m tools.validate_xindb PCOD-Inorg-20261020.xinDB --json out.json
 |---|---|
 | 2026-10-21 / 22 | `COD-Inorg`、`TCOD-Inorg`、`PCOD-Inorg` 三库建成（xinDB v3） |
 | 2026-10-23 | 本仓库建立并发布 `20261020` release（代码 + 三个 zip）；COD 库 `journal_mode` 由 WAL 归一为 DELETE，`integrity_check` 复核通过 |
+| 2026-10-23 | 三个库从 `PolyXRD-DataBase/xindb/` 迁到本仓库 `data/`；补入无机分类（①）与两份专项复核（④）工具，链路自足 |
