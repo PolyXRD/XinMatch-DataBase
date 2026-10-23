@@ -1,0 +1,28 @@
+# ── 数据库本体：不入仓（单库 68 MB–1.7 GB）──────────────────
+data/
+*.xinDB
+*.xinDB-wal
+*.xinDB-shm
+*.db
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# ── release 打包暂存 ────────────────────────────────────────
+_release/
+
+# ── Python ─────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# ── 工具与编辑器 ────────────────────────────────────────────
+.workbuddy/
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+~$*
