@@ -106,8 +106,11 @@ pip install numpy gemmi
 
 代码不下载数据。链路是：**原始归档 → 无机子集 → `.xinDB`**。
 
+**源数据不在本仓库**，2026-10-23 起统一放在 `D:/Project/XRD/sync-COD`（与
+[PolyXRD-DataBase](https://github.com/PolyXRD/PolyXRD-DataBase) 共用）：
+
 ```
-<data-root>/
+D:/Project/XRD/sync-COD/       ← 数据根，可用环境变量 XRD_DATA_ROOT 覆盖
 ├── COD/  PCOD/  TCOD/          # 原始归档（层级 3 / 2 / 3，脚本按此解析 id）
 ├── inorg_cif/COD|PCOD|TCOD/    # ← 第 ① 步产物：判为无机的 CIF 副本
 └── inorg_manifest.sqlite       # ← 第 ① 步产物：每文件一行清单
@@ -116,14 +119,16 @@ pip install numpy gemmi
 第 ① 步（无机判定 = "不含 C，或含 C 但不含 H" + 复制 + 清单）：
 
 ```bash
-XRD_DATA_ROOT=D:/Project/XRD/PolyXRD-DataBase python tools/scan_inorg.py --workers 6
+python tools/scan_inorg.py --workers 6          # 缺省就地读写上面的数据根
+XRD_DATA_ROOT=/other/root python tools/scan_inorg.py --workers 6   # 换盘时覆盖
 ```
 
 - 判据、id 偏移（PCOD +2e7 / TCOD +1e8）与本仓库已发布的三库**逐条一致**（脚本原样沿用）。
-- 已发布库用的 `inorg_cif/` 现状就在 `D:\Project\XRD\PolyXRD-DataBase\inorg_cif\`（1,188,103 个 CIF，
+- 已发布库用的 `inorg_cif/` 现状就在 `D:\Project\XRD\sync-COD\inorg_cif\`（1,188,103 个 CIF，
   与 polyDB 共用）。本仓库不带这批数据，也不必带 —— 只读引用即可。
-- 建库时 `--cif-root` 缺省指向 `xinmatch/core/db/cif_scan.py` 的 `DEFAULT_INORG_*_ROOT`
-  （原作者的 `D:\Project\XRD\PolyXRD-DataBase\inorg_cif\*`）。**换机器用 `--cif-root` 指过去**，不必改代码。
+- 建库时 `--cif-root` 缺省指向 `xinmatch/core/db/cif_scan.py` 的 `DEFAULT_INORG_*_ROOT`，
+  后者由 `XRD_DATA_ROOT` 推导（缺省即 `D:\Project\XRD\sync-COD\inorg_cif\*`）。
+  换机器**用环境变量或 `--cif-root` 指过去**，不必改代码。
 
 ### 3.3 建库
 
@@ -197,7 +202,7 @@ python -m tools.validate_xindb PCOD-Inorg-20261020.xinDB --json out.json
 │       └── data/atomic_scattering_params.json   Cromer-Mann 系数（99 元素）
 ├── tools/                         四步链路，索引见 tools/README.md
 │   ├── scan_inorg.py              ① 无机分类 + 副本 + 清单（XRD_DATA_ROOT 决定根目录）
-│   ├── build_dbs.py               ① 的判据实现（parse_elements / is_inorganic）
+│   ├── cif_common.py              ① 的判据实现（parse_elements / is_inorganic / formula_mass）
 │   ├── fastcif.py  fastxrd.py     ① 依赖的 CIF 解析 / 反射计算
 │   ├── build_cod_inorg_xindb.py   ② 三库构建入口（**主入口**）
 │   ├── build_cod_xindb.py         ② 底层构建器（分块写入 / 断点续跑 / 记账）
@@ -246,3 +251,4 @@ python -m tools.validate_xindb PCOD-Inorg-20261020.xinDB --json out.json
 | 2026-10-21 / 22 | `COD-Inorg`、`TCOD-Inorg`、`PCOD-Inorg` 三库建成（xinDB v3） |
 | 2026-10-23 | 本仓库建立并发布 `20261020` release（代码 + 三个 zip）；COD 库 `journal_mode` 由 WAL 归一为 DELETE，`integrity_check` 复核通过 |
 | 2026-10-23 | 三个库从 `PolyXRD-DataBase/xindb/` 迁到本仓库 `data/`；补入无机分类（①）与两份专项复核（④）工具，链路自足 |
+| 2026-10-23 | **源数据迁出** → `D:/Project/XRD/sync-COD`（两库共用），`XRD_DATA_ROOT` 缺省改为该路径；`build_dbs.py` 剥成纯函数模块 `cif_common.py`（旧 3COD sqlite 打包器删除） |

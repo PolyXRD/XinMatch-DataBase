@@ -65,17 +65,23 @@ __all__ = [
     "count_cif_files",
 ]
 
+#: 共享数据根：COD/PCOD/TCOD 原始归档、``inorg_cif`` 无机子集与
+#: ``inorg_manifest.sqlite`` 清单都在这里，由 PolyXRD 与 XinMatch 两库共用。
+#: 2026-10-23 起移出仓库、统一放 ``D:/Project/XRD/sync-COD``；
+#: 换盘/换机器用环境变量 ``XRD_DATA_ROOT`` 覆盖。
+DATA_ROOT = Path(os.environ.get("XRD_DATA_ROOT") or r"D:\Project\XRD\sync-COD")
+
 #: Full COD CIF archive root (read-only, 535 166 files).
-DEFAULT_COD_ROOT = Path(r"D:\Project\XRD\PolyXRD-DataBase\COD")
+DEFAULT_COD_ROOT = DATA_ROOT / "COD"
 
 #: Inorganic-only subset of the COD archive (read-only, 79 198 files).
-DEFAULT_INORG_COD_ROOT = Path(r"D:\Project\XRD\PolyXRD-DataBase\inorg_cif\COD")
+DEFAULT_INORG_COD_ROOT = DATA_ROOT / "inorg_cif" / "COD"
 
 #: Inorganic-only subset of the PCOD archive (predicted structures, 1 061 962 files).
-DEFAULT_INORG_PCOD_ROOT = Path(r"D:\Project\XRD\PolyXRD-DataBase\inorg_cif\PCOD")
+DEFAULT_INORG_PCOD_ROOT = DATA_ROOT / "inorg_cif" / "PCOD"
 
 #: Inorganic-only subset of the TCOD archive (theoretical structures, 46 943 files).
-DEFAULT_INORG_TCOD_ROOT = Path(r"D:\Project\XRD\PolyXRD-DataBase\inorg_cif\TCOD")
+DEFAULT_INORG_TCOD_ROOT = DATA_ROOT / "inorg_cif" / "TCOD"
 
 #: Number of digits in a COD/PCOD id (those archives zero-pad to 7).
 _ID_DIGITS = 7

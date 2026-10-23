@@ -13,14 +13,16 @@
 | 脚本 | 作用 |
 |---|---|
 | `scan_inorg.py` | 扫 COD/PCOD/TCOD，按"**不含 C，或含 C 但不含 H**"判无机；把无机条目复制到 `<root>/inorg_cif/{LIB}/`；生成清单 `<root>/inorg_manifest.sqlite`（每文件一行：统一 id、化学式、元素、是否无机） |
-| `build_dbs.py` | 提供 `parse_elements` / `is_inorganic` / `cell_volume`（被 ① 复用）。**文件里还有旧的 3COD `.sqlite` 打包器 `main()`，本仓库不用，忽略即可** |
+| `cif_common.py` | 提供 `parse_elements` / `is_inorganic` / `cell_volume` / `formula_mass`（被 ① 复用）。前身是 `build_dbs.py`，现已剥掉旧 3COD `.sqlite` 打包器，只剩纯函数 |
 | `fastcif.py` | 快速 CIF 解析 + 对称展开（① 判元素时要读化学式） |
 | `fastxrd.py` | 反射计算（polyDB 侧的峰引擎；① 只在 import 链上被带入） |
 
-数据根目录由 **`XRD_DATA_ROOT`** 决定（缺省 = 本仓库根）。本仓库不带 200 万条原始 CIF，实际用法：
+数据根目录由 **`XRD_DATA_ROOT`** 决定，**缺省 = `D:/Project/XRD/sync-COD`**
+（2026-10-23 起源数据统一迁到这里，与 PolyXRD-DataBase 共用）。本仓库不带 200 万条原始 CIF：
 
 ```bash
-XRD_DATA_ROOT=D:/Project/XRD/PolyXRD-DataBase python tools/scan_inorg.py --workers 6
+python tools/scan_inorg.py --workers 6          # 缺省就地读写上面的数据根
+XRD_DATA_ROOT=/other/root python tools/scan_inorg.py --workers 6   # 换盘时覆盖
 # 读 <root>/COD|PCOD|TCOD，写 <root>/inorg_cif/ 与 <root>/inorg_manifest.sqlite
 ```
 
