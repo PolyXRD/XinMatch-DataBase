@@ -83,6 +83,8 @@ from typing import TypeAlias
 import gemmi
 import numpy as np
 
+from .cif_meta import cell_parameters_from_block
+
 __all__ = [
     "DEFAULT_WAVELENGTH",
     "DEFAULT_DMIN",
@@ -94,6 +96,7 @@ __all__ = [
     "PEAK_CONVENTION",
     "PatternResult",
     "compute_pattern",
+    "compute_pattern_from_block",
     "compute_pattern_from_structure",
     "compute_pattern_from_text",
 ]
@@ -104,6 +107,24 @@ DEFAULT_WAVELENGTH = 1.5406
 #: Lowest resolvable d-spacing (A).  ``lambda / 2`` = 0.7703 A is the physical
 #: back-scattering limit (2 theta = 180 deg); nothing below it is measurable.
 DEFAULT_DMIN = DEFAULT_WAVELENGTH / 2.0
+
+#: Relative tolerance for the ``2 theta = 180 deg`` boundary.  A reflection whose
+#: d is only "greater" than ``wavelength / 2`` because of floating-point
+#: rounding (the 5 COD phases whose cell axis is an integer multiple of
+#: 0.7703 A) is at exactly 180 deg: it is not measurable and the
+#: Lorentz-polarisation factor diverges there.  Requiring
+#: ``2 * d > wavelength * (1 + eps)`` drops those boundary reflections while
+#: leaving every physically measurable reflection untouched.
+_MEASURABLE_REL_EPS = 1e-9
+
+#: Smallest ``sin(theta)`` / ``cos(theta)`` accepted by the Lorentz-polarisation
+#: factor.  The classical LP expression diverges at both ends of the measurable
+#: range (``1 / sin^2 theta`` as theta -> 0, ``1 / cos theta`` at 2 theta = 180
+#: deg).  Flooring the two trig factors at the value for ``2 theta = 0.001`` /
+#: ``179.999`` deg keeps the factor finite for *any* input -- including a caller
+#: that passes a custom ``dmin`` below the back-scattering limit -- without
+#: changing any value inside the normal peak-table range (2.94..180 deg).
+_MIN_LP_TRIG = math.cos(math.radians(179.999) / 2.0)
 
 #: Largest d-spacing kept (A).  Equals 2 theta = 2.94 deg for Cu K-alpha and
 #: bounds the reflection count of very large cells.
@@ -167,6 +188,55 @@ def _scattering_table() -> dict[str, tuple[tuple[float, float], ...]]:
 def _atomic_numbers() -> dict[str, float]:
     """Atomic number per element symbol, as required by the Cromer-Mann form."""
     return {el: float(gemmi.Element(el).atomic_number) for el in _scattering_table()}
+
+
+#: gemmi's default (placeholder) unit cell.  ``read_small_structure`` leaves it
+#: in place when it cannot map the cell tags of a CIF; computing a pattern from
+#: it would emit a single bogus reflection at d = 1 A, so such a phase must be
+#: either recovered from the text tags or reported as uncomputable.
+_DEFAULT_CELL_PARAMS = (1.0, 1.0, 1.0, 90.0, 90.0, 90.0)
+
+
+def _cell_is_usable(cell: gemmi.UnitCell | None) -> bool:
+    """True when *cell* is a real unit cell rather than gemmi's placeholder.
+
+    ``gemmi.UnitCell.is_crystal()`` cannot be used as the "was the cell read?"
+    test: it is ``False`` for any cell whose ``a`` is not greater than 1, which
+    includes valid low-``a`` grids.  The placeholder is detected by its exact
+    parameter tuple instead; a real crystal cell of (1, 1, 1, 90, 90, 90) does
+    not exist (that is a 1 A^3 cell).
+    """
+    if cell is None:
+        return False
+    params = (cell.a, cell.b, cell.c, cell.alpha, cell.beta, cell.gamma)
+    a, b, c, alpha, beta, gamma = params
+    if not all(math.isfinite(value) for value in params):
+        return False
+    if params == _DEFAULT_CELL_PARAMS:
+        return False
+    if a <= 0.0 or b <= 0.0 or c <= 0.0:
+        return False
+    return 0.0 < alpha < 180.0 and 0.0 < beta < 180.0 and 0.0 < gamma < 180.0
+
+
+def _read_cif_block(cif_path: str | Path) -> gemmi.cif.Block | None:
+    """Return the sole block of a CIF file, or ``None`` when unparseable."""
+    try:
+        return gemmi.cif.read(str(cif_path)).sole_block()
+    except Exception:
+        return None
+
+
+def _recover_cell(block: gemmi.cif.Block | None) -> gemmi.UnitCell | None:
+    """Rebuild a unit cell from the CIF text tags (see ``cell_parameters_from_block``)."""
+    params = cell_parameters_from_block(block)
+    if params is None:
+        return None
+    try:
+        cell = gemmi.UnitCell(*params)
+    except Exception:  # pragma: no cover - gemmi validates its arguments
+        return None
+    return cell if _cell_is_usable(cell) else None
 
 
 def _reciprocal_matrix(cell: gemmi.UnitCell) -> np.ndarray | None:
@@ -284,6 +354,24 @@ def _enumerate_hkl(
     return np.concatenate(chunks), np.concatenate(d_chunks)
 
 
+#: Target number of ``(reflection x atom)`` phase values per structure-factor
+#: block (~0.25 M doubles = 2 MiB of float64), i.e. the block size that keeps the
+#: ``(m, n_atoms)`` temporaries (``cos``/``sin``/``w``) inside L2/L3 instead of
+#: streaming through main memory.  This matters for the handful of large-cell
+#: COD phases that dominate a library build: at 720 atoms the old fixed 8192-row
+#: block allocated ~47 MiB *per temporary*, and capping by atom count measured
+#: ~1.2x faster over a random real-CIF sample (~1.4x on the slowest phase).
+#: The block boundary only decides which rows are processed together; every
+#: row's sum is computed in the same order, so the result is bit-identical
+#: (asserted by ``tests/test_perf_tuning.py``).
+_SF_BLOCK_ELEMENTS = 262_144
+
+#: Bounds of the adaptive block: never smaller than 256 rows (loop overhead) and
+#: never larger than the historical 8192 rows (small cells are fine in one go).
+_SF_BLOCK_MIN = 256
+_SF_BLOCK_MAX = 8192
+
+
 def _structure_factors(
     hkl: np.ndarray,
     frac: np.ndarray,
@@ -292,13 +380,21 @@ def _structure_factors(
     symbols: tuple[str, ...],
     recip: np.ndarray,
     *,
-    chunk: int = 8192,
+    chunk: int | None = None,
 ) -> np.ndarray:
     """``|F(hkl)|**2`` for every reflection, vectorised over reflections.
 
     Reflections are processed in blocks so the ``(n_hkl, n_atoms)`` phase matrix
-    never exceeds ``chunk * n_atoms`` elements.
+    never exceeds ``chunk * n_atoms`` elements.  ``chunk=None`` (the production
+    default) sizes the block adaptively from the atom count (see
+    :data:`_SF_BLOCK_ELEMENTS`); passing an explicit integer keeps the historical
+    fixed-block behaviour (used by tests / benchmarks).
     """
+    if chunk is None:
+        chunk = min(
+            _SF_BLOCK_MAX,
+            max(_SF_BLOCK_MIN, _SF_BLOCK_ELEMENTS // max(len(symbols), 1)),
+        )
     table = _scattering_table()
     znum = _atomic_numbers()
 
@@ -378,9 +474,18 @@ def _lorentz_polarization(two_theta_deg: np.ndarray) -> np.ndarray:
     ``2 theta >= 180 deg`` are unmeasurable and are never passed in.
     """
     theta = np.radians(two_theta_deg) / 2.0
-    sin_t = np.sin(theta)
-    cos_t = np.cos(theta)
-    return (1.0 + np.cos(2.0 * theta) ** 2) / (sin_t * sin_t * cos_t)
+    # A floor (not a clip of the angle) keeps every normal angle bit-identical:
+    # np.maximum returns the original value whenever the trig factor is above
+    # it.
+    sin_t = np.maximum(np.sin(theta), _MIN_LP_TRIG)
+    cos_t = np.maximum(np.cos(theta), _MIN_LP_TRIG)
+    # ``np.asarray`` only re-establishes the concrete dtype for numpy's loose
+    # ufunc stubs; the value is already a float64 array, so behaviour is
+    # unchanged.
+    return np.asarray(
+        (1.0 + np.cos(2.0 * theta) ** 2) / (sin_t * sin_t * cos_t),
+        dtype=np.float64,
+    )
 
 
 def _group_start(two_theta_sorted: np.ndarray, tol: float) -> np.ndarray:
@@ -448,7 +553,7 @@ def compute_pattern_from_structure(
         truncated to ``max_peaks``.  ``None`` when the structure carries no
         cell / sites or yields no usable reflection.
     """
-    if ss.cell is None or not ss.sites:
+    if ss.cell is None or not _cell_is_usable(ss.cell) or not ss.sites:
         return None
     cell = ss.cell
     recip = _reciprocal_matrix(cell)
@@ -465,7 +570,12 @@ def compute_pattern_from_structure(
     hkl, d = enum
 
     # 2 d < lambda  <=>  2 theta >= 180 deg: unmeasurable, and LP diverges there.
-    measurable = (2.0 * d) > wavelength
+    # The relative epsilon is essential: for the COD phases whose cell axis is an
+    # integer multiple of lambda/2 (e.g. c = 7.703 A = 10 * 0.7703) the boundary
+    # reflection is kept by a naive ``2*d > lambda`` test through float rounding,
+    # its LP factor explodes to 1e16..1e21, and the normalised pattern collapses
+    # to that single bogus line at d = 0.7703 A.
+    measurable = (2.0 * d) > wavelength * (1.0 + _MEASURABLE_REL_EPS)
     if not measurable.any():
         return None
     hkl = hkl[measurable]
@@ -510,14 +620,104 @@ def compute_pattern_from_structure(
     return d_m, i_m
 
 
+def _compute_pattern_recovering_cell(
+    ss: gemmi.SmallStructure,
+    block: gemmi.cif.Block | None,
+    *,
+    dmin: float,
+    dmax: float,
+    wavelength: float,
+    max_peaks: int,
+    max_hkl: int,
+    return_hkl: bool,
+    normalize: bool,
+) -> PatternResult | None:
+    """Shared cell-recovery step of every file/text/block pattern entry point.
+
+    gemmi leaves its default ``(1, 1, 1, 90, 90, 90)`` cell in place when it
+    cannot map the CIF cell tags, which would produce one bogus d = 1 A line.
+    The cell is therefore rebuilt from the CIF text tags (a few COD files split
+    the six values over several items); when that fails too the phase is
+    reported as uncomputable.  Keeping this in one function is what makes
+    :func:`compute_pattern`, :func:`compute_pattern_from_text` and
+    :func:`compute_pattern_from_block` agree bit for bit.
+    """
+    if not _cell_is_usable(ss.cell):
+        recovered = _recover_cell(block)
+        if recovered is None:
+            return None
+        ss.cell = recovered
+    return compute_pattern_from_structure(
+        ss,
+        dmin=dmin,
+        dmax=dmax,
+        wavelength=wavelength,
+        max_peaks=max_peaks,
+        max_hkl=max_hkl,
+        return_hkl=return_hkl,
+        normalize=normalize,
+    )
+
+
+def compute_pattern_from_block(
+    block: gemmi.cif.Block | None,
+    *,
+    structure: gemmi.SmallStructure | None = None,
+    dmin: float = DEFAULT_DMIN,
+    dmax: float = DEFAULT_DMAX,
+    wavelength: float = DEFAULT_WAVELENGTH,
+    max_peaks: int = DEFAULT_MAX_PEAKS,
+    max_hkl: int = DEFAULT_MAX_HKL,
+    return_hkl: bool = False,
+    normalize: bool = True,
+) -> PatternResult | None:
+    """Compute the d-I powder pattern of a CIF block the caller already parsed.
+
+    Block-based twin of :func:`compute_pattern`, used by the library builder so
+    a single ``gemmi.cif.read`` feeds both the metadata and the peak table.  It
+    applies exactly the same placeholder-cell recovery and physics as the
+    path-based reader; :func:`compute_pattern_from_structure` documents the
+    parameters.
+
+    Args:
+        block: The sole CIF block of the file (from ``gemmi.cif.read`` /
+            ``gemmi.cif.read_string``), or ``None`` when the file could not be
+            parsed.
+        structure: The structure already built from *block*.  Passing it in
+            avoids a second ``make_small_structure_from_block`` call; when
+            omitted, it is built here.
+
+    Returns:
+        ``(d_arr, i_arr)`` (or the ``return_hkl`` variant), or ``None`` when the
+        block yields no usable structure / reflection.
+    """
+    if structure is None:
+        if block is None:
+            return None
+        try:
+            structure = gemmi.make_small_structure_from_block(block)
+        except Exception:
+            return None
+    return _compute_pattern_recovering_cell(
+        structure,
+        block,
+        dmin=dmin,
+        dmax=dmax,
+        wavelength=wavelength,
+        max_peaks=max_peaks,
+        max_hkl=max_hkl,
+        return_hkl=return_hkl,
+        normalize=normalize,
+    )
+
+
 def compute_pattern_from_text(text: str, **kwargs) -> PatternResult | None:
     """Compute the pattern of CIF text held in memory (e.g. a ``cif_gz`` blob)."""
     try:
-        doc = gemmi.cif.read_string(text)
-        ss = gemmi.make_small_structure_from_block(doc.sole_block())
+        block = gemmi.cif.read_string(text).sole_block()
     except Exception:
         return None
-    return compute_pattern_from_structure(ss, **kwargs)
+    return compute_pattern_from_block(block, **kwargs)
 
 
 def compute_pattern(
@@ -534,15 +734,22 @@ def compute_pattern(
     """Compute the d-I powder pattern of a CIF file.
 
     A single unreadable file must never abort a whole library build, so every
-    parse failure is reported as ``None``.  See
-    :func:`compute_pattern_from_structure` for the parameters.
+    parse failure is reported as ``None``.  A phase whose cell gemmi cannot map
+    is recovered from the CIF text tags; when even that fails the phase is
+    uncomputable and ``None`` is returned instead of a pattern computed from
+    gemmi's default (1 A) cell.  See :func:`compute_pattern_from_structure` for
+    the parameters.
     """
     try:
         ss = gemmi.read_small_structure(str(cif_path))
     except Exception:
         return None
-    return compute_pattern_from_structure(
+    # Only re-read the text when gemmi could not map the cell: the common case
+    # must not pay for a second parse.
+    block = None if _cell_is_usable(ss.cell) else _read_cif_block(cif_path)
+    return _compute_pattern_recovering_cell(
         ss,
+        block,
         dmin=dmin,
         dmax=dmax,
         wavelength=wavelength,

@@ -1,0 +1,19 @@
+# Lint gate for the build/validation toolchain.
+#
+# The four ① (inorganic classification) scripts are byte-frozen copies of the
+# PolyXRD-DataBase/sync-COD implementation: their behaviour must stay identical
+# to the sibling repos' scan (element judgement, id shifts, directory layout),
+# so they are excluded instead of being reformatted.  Everything else — the
+# builder, the validators, the tests — must stay clean.
+line-length = 100
+target-version = "py310"
+extend-exclude = [
+    "tools/scan_inorg.py",
+    "tools/fastxrd.py",
+    "tools/fastcif.py",
+    "tools/cif_common.py",
+]
+
+[lint]
+select = ["E", "W", "F", "I", "N", "UP", "B", "SIM"]
+ignore = ["E501"]

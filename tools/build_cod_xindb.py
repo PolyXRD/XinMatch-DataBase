@@ -1,53 +1,86 @@
-"""Build a v3 ``.xinDB`` reference library from the COD CIF archive (M2 / S2.3 + S2.4).
+"""Build a v3 ``.xinDB`` reference library from a COD/PCOD/TCOD CIF archive.
 
-Two products come out of this one implementation:
+Six products come out of this one implementation: the Cartesian product of the
+three CIF sources (``COD`` experimental, ``PCOD`` predicted, ``TCOD``
+theoretical) and the two subsets (``full`` = exhaustive reference, ``inorg`` =
+the default interactive library).
 
-``COD-Full.xinDB``
-    Built from the **full** COD CIF archive (535,166 files).  This is the
-    exhaustive reference: every phase the archive contains.
+================  ==============================  ==============================
+library           archive root                    entry-id shift
+================  ==============================  ==============================
+``COD-Full``      ``<root>/COD``                  ``0``
+``COD-Inorg``     ``<root>/inorg_cif/COD``        ``0``
+``PCOD-Full``     ``<root>/PCOD``                 ``+20 000 000``
+``PCOD-Inorg``    ``<root>/inorg_cif/PCOD``       ``+20 000 000``
+``TCOD-Full``     ``<root>/TCOD``                 ``+100 000 000``
+``TCOD-Inorg``    ``<root>/inorg_cif/TCOD``       ``+100 000 000``
+================  ==============================  ==============================
 
-``COD-Inorg.xinDB``
-    Built from the **inorganic subset** archive (79,198 files).  This is
-    the default interactive library — the full archive contains thousands
-    of near-duplicate cards for the same phase, and those duplicates dilute
-    the FoM vote (measured: top-1 agreement collapses as the library grows).
+``library_kind``, the archive root and the id shift are all derived from
+``--source`` + ``--set`` through :data:`xinmatch.core.db.cif_scan.SOURCES`, so
+the six combinations cannot drift apart.  ``--cif-root`` and ``--id-offset``
+remain as explicit overrides for trials, but they print a warning: a library
+built with a mismatched kind/root pairing is not reproducible from the
+convention alone.
 
-Both are **external** libraries: they are not shipped with the application.
-The build writes a self-contained single file that the user can keep in any
-folder and mount through *设置 → 参考数据库 → 添加外部库*.
+Why the inorganic subset is the interactive library
+---------------------------------------------------
+The full archives hold thousands of near-duplicate cards for the same phase,
+and those duplicates spread the FoM vote so thin that the top-1 hit rate
+collapses as the library grows.  The subsets keep the ranking honest while the
+full archives stay available as the exhaustive reference.
+
+The three archived sources are **external** libraries: they are not shipped
+with the application.  The build writes a self-contained single file that the
+user can keep in any folder and mount through *设置 → 参考数据库 → 添加外部库*.
 
 Data flow
 ---------
 ::
 
-    CIF archive ──► cif_scan (paths)  ──► cif_meta (scalars)  ──┐
-                     │                                            ├──► XinDBWriter ──► .xinDB
-                     └──► peak_compute (d, I, hkl) ─────────────┘
+    CIF archive ──► cif_scan (paths) ──► build_pipeline.compute_phase ──► XinDBWriter
+                                          (one parse: meta + pattern)
 
 Nothing else is read: no legacy database, no intermediate index.  The CIF
-archive is the single source of truth, so the result is reproducible from
-the archive alone.
+archive is the single source of truth, so the result is reproducible from the
+archive alone.  Each CIF is parsed **once**: ``compute_phase`` produces both the
+``PhaseMeta`` and the ``(d, I)`` pattern from the same gemmi document.
 
 Resumability
 ------------
 A full build parses half a million CIF files and computes a powder pattern
-for each — hours of work.  The script therefore keeps a watermark table
+for each -- hours of work.  The script therefore keeps a watermark table
 inside the output file and supports ``--resume`` so an interrupted run
 continues instead of starting over.  ``--start`` / ``--limit`` restrict the
 work to a slice for verification.
+
+Output location
+---------------
+``--out`` wins when given.  Otherwise the file is written to
+``<repo>/data/<library_kind>-<data_date>.xinDB`` -- the database is built in
+this repository, next to the code and the docs.  ``XINMATCH_XINDB_DIR`` is an
+**explicit override** of that directory (e.g. a shared archive next to the CIF
+sources); it is not consulted unless it is set.
 
 Usage
 -----
 ::
 
     # verification slice first (always do this before a full build)
-    python -m tools.build_cod_xindb --limit 1000 --out /tmp/slice.xinDB
+    python -m tools.build_cod_xindb --source COD --set inorg --limit 1000 \\
+        --out tmp/accept/COD-Inorg-slice.xinDB
 
-    # full build, resumable
-    python -m tools.build_cod_xindb --out D:/XRD-DB/COD-Full.xinDB
+    # the six libraries (data date = CIF snapshot date)
+    python -m tools.build_cod_xindb --source COD  --set inorg --data-date 20261020 --workers 14 -v
+    python -m tools.build_cod_xindb --source COD  --set full  --data-date 20261020 --workers 14 -v
+    python -m tools.build_cod_xindb --source PCOD --set inorg --data-date 20261020 --workers 14 -v
+    python -m tools.build_cod_xindb --source PCOD --set full  --data-date 20261020 --workers 14 -v
+    python -m tools.build_cod_xindb --source TCOD --set inorg --data-date 20261020 --workers 14 -v
+    python -m tools.build_cod_xindb --source TCOD --set full  --data-date 20261020 --workers 14 -v
 
-    # the inorganic interactive library
-    python -m tools.build_cod_inorg_xindb --out D:/XRD-DB/COD-Inorg.xinDB
+    # legacy spellings still work: --kind is a COD-only alias of --set
+    python -m tools.build_cod_xindb --kind full
+    python -m tools.build_cod_inorg_xindb --source PCOD
 """
 
 from __future__ import annotations
@@ -65,56 +98,67 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from xinmatch.core.db.cif_meta import PhaseMeta  # noqa: E402
+from xinmatch.core.db.cif_scan import (  # noqa: E402
+    SOURCES,
+    SUBSETS,
+    SourceSpec,
+    get_source,
+    iter_cod_cifs,
+)
 from xinmatch.core.db.peak_compute import (  # noqa: E402
     DEFAULT_DMIN,
     DEFAULT_MAX_PEAKS,
-    compute_pattern,
-)
-from xinmatch.core.db.writer_v3 import XinDBWriter  # noqa: E402
-
-from xinmatch.core.db.cif_scan import (  # noqa: E402
-    DEFAULT_COD_ROOT,
-    DEFAULT_INORG_COD_ROOT,
-    iter_cod_cifs,
 )
 from xinmatch.core.db.schema_v3 import (  # noqa: E402
     CHUNK_SIZE,
     TOP_K,
     XINDB_SUFFIX,
 )
+from xinmatch.core.db.writer_v3 import XinDBWriter  # noqa: E402
 
 logger = logging.getLogger("tools.build_cod_xindb")
+
+#: Subsets accepted by the legacy ``--kind`` alias.  ``--kind`` predates the
+#: six-library layout and only ever meant "which COD set", so it stays
+#: restricted to COD while ``--set`` works for every source.
+_KIND_CHOICES: tuple[str, ...] = ("full", "inorg")
 
 
 def default_out_dir() -> Path:
     """Directory the build scripts write to when ``--out`` is not given.
 
-    ``XINMATCH_XINDB_DIR`` wins, which is the same variable
-    :func:`xinmatch.core.db.multi_db.xindb_default_dir` consults, so one
-    environment variable keeps the build output and the library picker pointing
-    at the same folder -- typically a shared archive next to the CIF sources
-    (``D:/Project/XRD/PolyXRD-DataBase/xindb``) instead of scattering one large
-    ``.xinDB`` per checkout.  Without the variable the scripts keep writing to
-    ``<repo>/data``, so a plain checkout stays self-contained.
+    The canonical location is ``<repo>/data``: this repository *is* the database
+    build repository, so a plain checkout keeps its products next to the code
+    and the docs.  ``XINMATCH_XINDB_DIR`` is an **explicit override** of that
+    directory -- set it only when the libraries should live in a shared archive
+    next to the CIF sources (the main XinMatch application consults the same
+    variable for its library picker).
     """
     override = os.environ.get("XINMATCH_XINDB_DIR", "").strip()
     if override:
         return Path(override).expanduser()
     return PROJECT_ROOT / "data"
 
-#: The two libraries this module can produce.
-LIBRARY_KINDS = {
-    "full": (
-        DEFAULT_COD_ROOT,
-        "COD-Full",
-        "COD full archive (all phases in the COD CIF collection)",
-    ),
-    "inorg": (
-        DEFAULT_INORG_COD_ROOT,
-        "COD-Inorg",
-        "COD inorganic subset (default interactive library)",
-    ),
-}
+
+@dataclass(frozen=True)
+class BuildPlan:
+    """One resolved ``main`` invocation, before any CIF is read.
+
+    Splitting the derivation out of :func:`main` keeps the CLI mapping testable
+    without building a library: ``--source``/``--set`` -> ``library_kind`` +
+    archive root + id shift is exactly the part that used to be hard-coded.
+    """
+
+    source: str
+    subset: str
+    library_kind: str
+    cif_root: Path
+    id_offset: int
+    data_date: str
+    out: Path
+    build_tool: str
+    #: Non-fatal override notices ("--cif-root overrides ..."), printed by main.
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass
@@ -158,22 +202,31 @@ def _compute_one(task: tuple[str, int]) -> tuple[int, PhaseMeta | None, object, 
     pickle it.  Returns ``(cod_id, meta, d_arr, i_arr, reason)`` where *reason* is
     ``""`` on success and a short machine-readable marker otherwise.
 
+    The CIF is parsed **once** by
+    :func:`xinmatch.core.db.build_pipeline.compute_phase`, which produces the
+    ``PhaseMeta`` and the ``(d, I)`` pattern from the same gemmi document (the
+    old two-call form parsed every file twice).  The imported module is the only
+    implementation there is: if it is missing the build fails loudly instead of
+    falling back to a second, drifting code path.
+
     Peak computation is by far the most expensive step (a large-cell phase can
     take seconds), so it is what gets parallelised; the SQLite writer stays in the
     parent process because a database handle cannot be shared.
     """
+    from xinmatch.core.db.build_pipeline import compute_phase
+    from xinmatch.core.db.cif_scan import entry_id_for_cod
+
     cif_path_str, cod_id = task
-    cif_path = Path(cif_path_str)
-    if not cif_path.is_file():
-        return cod_id, None, None, None, "no_cif"
-    meta = _parse_meta(cif_path, cod_id, _ID_OFFSET[0])
-    if meta is None:
-        return cod_id, None, None, None, "no_meta"
-    peaks = compute_pattern(
-        cif_path, dmin=_DMIN[0], max_peaks=_MAX_PEAKS[0], normalize=True
+    entry_id = entry_id_for_cod(int(cod_id) + _ID_OFFSET[0])
+    meta, peaks, reason = compute_phase(
+        Path(cif_path_str),
+        entry_id=entry_id,
+        dmin=_DMIN[0],
+        max_peaks=_MAX_PEAKS[0],
+        normalize=True,
     )
-    if peaks is None:
-        return cod_id, None, None, None, "no_peaks"
+    if reason or meta is None or peaks is None:
+        return cod_id, None, None, None, reason or "no_meta"
     return cod_id, meta, peaks[0], peaks[1], ""
 
 
@@ -218,7 +271,8 @@ def build(
     Args:
         cif_root: CIF archive root (the fan-out directory).
         out: Output ``.xinDB`` path.
-        library_kind: e.g. ``"COD-Inorg"`` / ``"PCOD-Inorg"`` — recorded in ``meta``.
+        library_kind: e.g. ``"COD-Inorg"`` / ``"PCOD-Full"`` -- recorded in
+            ``meta`` and used by ``validate_xindb`` to reconcile the file name.
         dmin: Minimum d-spacing (Å) kept in the pattern.
         max_peaks: Strongest reflections kept per phase.
         start: Lowest archive id to process (pre-offset, i.e. as found on disk).
@@ -384,7 +438,7 @@ def build(
 
 
 def _cod_id_of(entry_id: str) -> int | None:
-    """Recover the numeric COD id from a stored ``96-XXX-XXXX`` entry id.
+    """Recover the numeric (possibly shifted) id from a stored entry id.
 
     The display id is built by ``entry_id_for_cod`` as ``"96-" + zfill(7)[:3] +
     "-" + zfill(7)[3:]``, so stripping the source prefix and the dash returns the
@@ -398,45 +452,42 @@ def _cod_id_of(entry_id: str) -> int | None:
     return int(digits) if digits.isdigit() and digits else None
 
 
-def _parse_meta(cif_path: Path, cod_id: int, id_offset: int = 0) -> PhaseMeta | None:
-    """Parse a CIF's metadata, tolerating malformed files.
+def build_arg_parser(*, default_subset: str = "full") -> argparse.ArgumentParser:
+    """Return the argument parser shared by the builder and its wrapper.
 
-    The ``entry_id`` must be the canonical display id (``96-XXX-XXXX``), the same
-    form the v2 library and the GUI use, so it is derived with
-    :func:`~xinmatch.core.db.cif_scan.entry_id_for_cod` rather than from the bare
-    numeric id.  *id_offset* is added first so PCOD/TCOD phases land in their own
-    id range instead of colliding with COD.
+    ``default_subset`` lets :mod:`tools.build_cod_inorg_xindb` keep its
+    inorganics default while reusing this parser (and therefore every flag).
     """
-    from xinmatch.core.db.cif_meta import parse_meta
-    from xinmatch.core.db.cif_scan import entry_id_for_cod
-
-    try:
-        return parse_meta(cif_path, entry_id=entry_id_for_cod(cod_id + int(id_offset)))
-    except Exception as exc:  # noqa: BLE001 - one bad CIF must not kill the build
-        logger.debug("metadata parse failed for %s: %s", cif_path, exc)
-        return None
-
-
-def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--source", choices=sorted(SOURCES), default="COD",
+        help="CIF archive family to build from (default COD)",
+    )
+    parser.add_argument(
+        "--set", dest="subset", choices=SUBSETS, default=None,
+        help="which CIF set to build: inorg (inorganic subset) or full "
+             f"(exhaustive archive); default {default_subset}",
+    )
+    parser.add_argument(
+        "--kind", choices=_KIND_CHOICES, default=None,
+        help="legacy COD-only alias of --set (kept for existing invocations)",
+    )
     parser.add_argument(
         "--out", type=Path, default=None,
         help="output .xinDB path (may live in any folder); defaults to "
-             "$XINMATCH_XINDB_DIR/<kind>-<data-date>.xinDB when that variable is "
-             "set, otherwise <repo>/data/<kind>-<data-date>.xinDB",
-    )
-    parser.add_argument(
-        "--kind", choices=sorted(LIBRARY_KINDS), default="full",
-        help="which library to build",
+             "<repo>/data/<library_kind>-<data_date>.xinDB, or "
+             "$XINMATCH_XINDB_DIR/<library_kind>-<data_date>.xinDB when that "
+             "variable is set as an explicit override",
     )
     parser.add_argument(
         "--data-date", default=None,
-        help="COD snapshot date (YYYYMMDD) recorded in meta.data_date and used "
+        help="CIF snapshot date (YYYYMMDD) recorded in meta.data_date and used "
              "in the default output name; defaults to today",
     )
     parser.add_argument(
         "--cif-root", type=Path, default=None,
-        help="CIF archive root (defaults to the archive for --kind)",
+        help="explicit CIF archive root, overriding the one derived from "
+             "--source/--set (prints a warning)",
     )
     parser.add_argument("--dmin", type=float, default=DEFAULT_DMIN)
     parser.add_argument("--max-peaks", type=int, default=DEFAULT_MAX_PEAKS)
@@ -451,12 +502,104 @@ def main(argv: list[str] | None = None) -> int:
              "and results are consumed in archive order, so the output is identical",
     )
     parser.add_argument(
-        "--id-offset", type=int, default=0,
-        help="numeric shift applied to the stored entry id so the archives do "
-             "not collide (COD 0, PCOD +20000000, TCOD +100000000); it does not "
-             "change which files are read",
+        "--id-offset", type=int, default=None,
+        help="explicit entry-id shift, overriding the one derived from --source "
+             "(COD 0, PCOD +20000000, TCOD +100000000); it does not change which "
+             "files are read (prints a warning)",
     )
     parser.add_argument("-v", "--verbose", action="store_true")
+    return parser
+
+
+def plan_from_args(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+    *,
+    default_subset: str = "full",
+    build_tool: str = "tools.build_cod_xindb",
+) -> BuildPlan:
+    """Resolve a parsed command line into a :class:`BuildPlan`.
+
+    This is the single place where ``(source, subset)`` becomes a
+    ``library_kind``, an archive root and an id shift; ``--cif-root`` /
+    ``--id-offset`` are applied only as warned overrides.
+    """
+    spec: SourceSpec = get_source(args.source)
+
+    if args.subset is not None and args.kind is not None:
+        parser.error("--kind is the legacy alias of --set; pass only one of them")
+    if args.kind is not None and spec.name != "COD":
+        parser.error(
+            f"--kind is the COD backward-compatibility alias; with --source "
+            f"{spec.name} use --set {args.kind}"
+        )
+    subset = str(args.subset or args.kind or default_subset).strip().lower()
+
+    warnings: list[str] = []
+    if args.cif_root is not None:
+        cif_root = Path(args.cif_root)
+        warnings.append(
+            f"--cif-root {cif_root} overrides the {spec.name}-{subset} archive "
+            f"root {spec.root(subset)}; library_kind stays {spec.library_kind(subset)}"
+        )
+    else:
+        cif_root = spec.root(subset)
+
+    if args.id_offset is not None:
+        id_offset = int(args.id_offset)
+        warnings.append(
+            f"--id-offset {id_offset:+,} overrides the {spec.name} convention "
+            f"{spec.id_offset:+,}; entry ids will not match the published ranges"
+        )
+    else:
+        id_offset = int(spec.id_offset)
+
+    # The CIF snapshot date is part of the identity of the library: two builds
+    # of the same kind from different snapshots must not be mistaken for each
+    # other, so it lands in both the file name and ``meta.data_date``.
+    data_date = (args.data_date or time.strftime("%Y%m%d")).strip()
+    out = args.out or (
+        default_out_dir() / f"{spec.library_kind(subset)}-{data_date}{XINDB_SUFFIX}"
+    )
+    return BuildPlan(
+        source=spec.name,
+        subset=subset,
+        library_kind=spec.library_kind(subset),
+        cif_root=cif_root,
+        id_offset=id_offset,
+        data_date=data_date,
+        out=Path(out),
+        build_tool=build_tool,
+        warnings=tuple(warnings),
+    )
+
+
+def resolve_plan(
+    argv: list[str] | None = None,
+    *,
+    default_subset: str = "full",
+    build_tool: str = "tools.build_cod_xindb",
+) -> BuildPlan:
+    """Parse *argv* and return the :class:`BuildPlan` without building anything.
+
+    Exposed separately so the ``--source``/``--set`` derivation can be tested
+    (and inspected by operators) without starting a build.
+    """
+    parser = build_arg_parser(default_subset=default_subset)
+    args = parser.parse_args(argv)
+    return plan_from_args(
+        args, parser, default_subset=default_subset, build_tool=build_tool
+    )
+
+
+def main(
+    argv: list[str] | None = None,
+    *,
+    default_subset: str = "full",
+    build_tool: str = "tools.build_cod_xindb",
+) -> int:
+    """Command-line entry point; returns the process exit code."""
+    parser = build_arg_parser(default_subset=default_subset)
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -464,30 +607,32 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    default_root, kind_label, _desc = LIBRARY_KINDS[args.kind]
-    cif_root = args.cif_root or default_root
-    if not cif_root.is_dir():
-        print(f"[ERR] CIF root not found: {cif_root}")
+    plan = plan_from_args(
+        args, parser, default_subset=default_subset, build_tool=build_tool
+    )
+    for message in plan.warnings:
+        print(f"[WARN] {message}")
+        logger.warning(message)
+
+    if not plan.cif_root.is_dir():
+        print(f"[ERR] CIF root not found: {plan.cif_root}")
         return 2
 
-    # The COD snapshot date is part of the identity of the library: two builds
-    # of the same kind from different snapshots must not be mistaken for each
-    # other, so it lands in both the file name and ``meta.data_date``.
-    data_date = (args.data_date or time.strftime("%Y%m%d")).strip()
-    out = args.out or (default_out_dir() / f"{kind_label}-{data_date}{XINDB_SUFFIX}")
-
-    print(f"kind:     {kind_label}")
-    print(f"data:     {data_date}")
-    print(f"cif root: {cif_root}")
-    print(f"id offset:{args.id_offset:+,}")
-    print(f"out:      {out}")
+    print(f"kind:     {plan.library_kind}")
+    print(f"source:   {plan.source}")
+    print(f"set:      {plan.subset}")
+    print(f"data:     {plan.data_date}")
+    print(f"cif root: {plan.cif_root}")
+    print(f"id offset:{plan.id_offset:+,}")
+    print(f"out:      {plan.out}")
     print()
 
     stats = build(
-        cif_root,
-        out,
-        library_kind=kind_label,
-        data_date=data_date,
+        plan.cif_root,
+        plan.out,
+        library_kind=plan.library_kind,
+        build_tool=plan.build_tool,
+        data_date=plan.data_date,
         dmin=args.dmin,
         max_peaks=args.max_peaks,
         start=args.start,
@@ -496,10 +641,10 @@ def main(argv: list[str] | None = None) -> int:
         tier=args.tier,
         log_every=args.log_every,
         workers=args.workers,
-        id_offset=args.id_offset,
+        id_offset=plan.id_offset,
     )
 
-    size_mb = out.stat().st_size / 1e6 if out.exists() else 0.0
+    size_mb = plan.out.stat().st_size / 1e6 if plan.out.exists() else 0.0
     print("\nbuild summary:")
     for key, value in stats.as_dict().items():
         print(f"  {key}: {value}")

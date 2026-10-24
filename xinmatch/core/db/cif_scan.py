@@ -1,10 +1,13 @@
-"""COD CIF archive scanner for the v3.0.0 database rebuild (M1-S1.1).
+"""COD/PCOD/TCOD CIF archive scanner for the v3.0.0 database rebuild (M1-S1.1).
 
 What this module does
 ---------------------
-The v3.0.0 rebuild has to walk the local COD CIF archive twice: once to
-count what is there, and once to feed every CIF into the parser.  Both jobs
-need the same three facts:
+The v3.0.0 rebuild has to walk a local CIF archive twice: once to count what
+is there, and once to feed every CIF into the parser.  It does this for the
+three archive families XinMatch ships as reference libraries -- COD
+(experimental), PCOD (predicted) and TCOD (theoretical) -- each of which
+exists both as a full archive and as an inorganic-only subset.  All six
+layouts need the same three facts:
 
 * how a numeric COD id maps onto a path inside the archive;
 * how a numeric COD id maps onto the reference-software entry id
@@ -35,6 +38,13 @@ CIF *dictionary* definitions (``.dic`` files).  Those are schema
 definitions, not crystal structures, and are therefore skipped by default:
 they would otherwise pollute both the file count and the rebuild input.
 
+The same walk serves all six archive roots registered in :data:`SOURCES`: the
+full archives (``COD`` / ``PCOD`` / ``TCOD``) and the inorganic subsets under
+``inorg_cif/``.  PCOD reuses COD's 7-digit layout, TCOD uses 8 digits, and the
+subsets may sit at a different depth; because :func:`iter_cod_cifs` discovers
+the fan-out from the directory names instead of assuming a width or a depth,
+one implementation covers every layout.
+
 Why not just glob ``**/*.cif``
 ------------------------------
 ``Path.rglob`` on this archive is both slow (it re-walks the same
@@ -49,6 +59,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -58,11 +69,19 @@ __all__ = [
     "DEFAULT_INORG_COD_ROOT",
     "DEFAULT_INORG_PCOD_ROOT",
     "DEFAULT_INORG_TCOD_ROOT",
+    "DEFAULT_PCOD_ROOT",
+    "DEFAULT_TCOD_ROOT",
+    "FULL_ROOTS",
+    "INORG_ROOTS",
+    "SOURCES",
+    "SUBSETS",
+    "SourceSpec",
     "cod_cif_relpath",
     "cod_id_from_stem",
-    "entry_id_for_cod",
-    "iter_cod_cifs",
     "count_cif_files",
+    "entry_id_for_cod",
+    "get_source",
+    "iter_cod_cifs",
 ]
 
 #: 共享数据根：COD/PCOD/TCOD 原始归档、``inorg_cif`` 无机子集与
@@ -74,6 +93,12 @@ DATA_ROOT = Path(os.environ.get("XRD_DATA_ROOT") or r"D:\Project\XRD\sync-COD")
 #: Full COD CIF archive root (read-only, 535 166 files).
 DEFAULT_COD_ROOT = DATA_ROOT / "COD"
 
+#: Full PCOD CIF archive root (predicted structures, read-only, 1 061 964 files).
+DEFAULT_PCOD_ROOT = DATA_ROOT / "PCOD"
+
+#: Full TCOD CIF archive root (theoretical structures, read-only, 362 294 files).
+DEFAULT_TCOD_ROOT = DATA_ROOT / "TCOD"
+
 #: Inorganic-only subset of the COD archive (read-only, 79 198 files).
 DEFAULT_INORG_COD_ROOT = DATA_ROOT / "inorg_cif" / "COD"
 
@@ -82,6 +107,116 @@ DEFAULT_INORG_PCOD_ROOT = DATA_ROOT / "inorg_cif" / "PCOD"
 
 #: Inorganic-only subset of the TCOD archive (theoretical structures, 46 943 files).
 DEFAULT_INORG_TCOD_ROOT = DATA_ROOT / "inorg_cif" / "TCOD"
+
+
+@dataclass(frozen=True)
+class SourceSpec:
+    """One CIF archive family and the conventions that go with it.
+
+    The six reference libraries are the Cartesian product of the three
+    *sources* (COD / PCOD / TCOD) and the two *subsets* (``inorg`` / ``full``).
+    Everything that differs between them is captured here, so the builders can
+    derive ``library_kind``, the archive root and the entry-id shift from a
+    single ``(source, subset)`` pair instead of hard-coding a second table:
+
+    ========  ================  =========================  =============
+    source    full archive      inorganic subset           entry-id shift
+    ========  ================  =========================  =============
+    COD       ``COD``           ``inorg_cif/COD``          ``0``
+    PCOD      ``PCOD``          ``inorg_cif/PCOD``         ``+20 000 000``
+    TCOD      ``TCOD``          ``inorg_cif/TCOD``         ``+100 000 000``
+    ========  ================  =========================  =============
+
+    Attributes:
+        name: Upper-case source name (``"COD"`` / ``"PCOD"`` / ``"TCOD"``).
+        full_root: Root of the full archive.
+        inorg_root: Root of the inorganic-only subset.
+        id_offset: Shift added to every archive id before it is formatted as an
+            entry id (the 3COD convention).  It keeps PCOD/TCOD phases from
+            colliding with COD phases; it never changes which files are read.
+    """
+
+    name: str
+    full_root: Path
+    inorg_root: Path
+    id_offset: int
+
+    def root(self, subset: str) -> Path:
+        """Return the archive root for *subset* (``"inorg"`` or ``"full"``)."""
+        return self.inorg_root if _subset_name(subset) == "inorg" else self.full_root
+
+    def library_kind(self, subset: str) -> str:
+        """Return the ``library_kind`` string for *subset*, e.g. ``"COD-Full"``."""
+        return f"{self.name}-{_SUBSET_LABEL[_subset_name(subset)]}"
+
+
+#: Subset spellings accepted on the command line and by :func:`SourceSpec.root`.
+SUBSETS: tuple[str, ...] = ("inorg", "full")
+
+#: ``library_kind`` infix for each subset (``COD-Inorg`` / ``COD-Full``).
+_SUBSET_LABEL: dict[str, str] = {"inorg": "Inorg", "full": "Full"}
+
+#: Central source registry.  Built from the ``DEFAULT_*`` constants above on
+#: purpose: the paths and the id shifts must each have exactly one definition,
+#: otherwise the constants and the builders silently drift apart.
+SOURCES: dict[str, SourceSpec] = {
+    "COD": SourceSpec(
+        name="COD",
+        full_root=DEFAULT_COD_ROOT,
+        inorg_root=DEFAULT_INORG_COD_ROOT,
+        id_offset=0,
+    ),
+    "PCOD": SourceSpec(
+        name="PCOD",
+        full_root=DEFAULT_PCOD_ROOT,
+        inorg_root=DEFAULT_INORG_PCOD_ROOT,
+        id_offset=20_000_000,
+    ),
+    "TCOD": SourceSpec(
+        name="TCOD",
+        full_root=DEFAULT_TCOD_ROOT,
+        inorg_root=DEFAULT_INORG_TCOD_ROOT,
+        id_offset=100_000_000,
+    ),
+}
+
+#: Convenience view: ``source -> inorganic subset root``.
+INORG_ROOTS: dict[str, Path] = {
+    name: spec.inorg_root for name, spec in SOURCES.items()
+}
+
+#: Convenience view: ``source -> full archive root``.
+FULL_ROOTS: dict[str, Path] = {name: spec.full_root for name, spec in SOURCES.items()}
+
+
+def _subset_name(subset: str) -> str:
+    """Normalise and validate a subset spelling.
+
+    Raises:
+        ValueError: When *subset* is not one of :data:`SUBSETS`.
+    """
+    key = str(subset).strip().lower()
+    if key not in _SUBSET_LABEL:
+        raise ValueError(
+            f"unknown subset {subset!r}; expected one of {', '.join(SUBSETS)}"
+        )
+    return key
+
+
+def get_source(name: str) -> SourceSpec:
+    """Return the :class:`SourceSpec` for *name* (case-insensitive).
+
+    Raises:
+        ValueError: When *name* is not one of the three known sources.
+    """
+    key = str(name).strip().upper()
+    try:
+        return SOURCES[key]
+    except KeyError:
+        raise ValueError(
+            f"unknown CIF source {name!r}; expected one of {', '.join(SOURCES)}"
+        ) from None
+
 
 #: Number of digits in a COD/PCOD id (those archives zero-pad to 7).
 _ID_DIGITS = 7
