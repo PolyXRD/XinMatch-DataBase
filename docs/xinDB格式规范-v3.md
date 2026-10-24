@@ -161,9 +161,9 @@ CREATE TABLE element_inv (element TEXT PRIMARY KEY, eids BLOB);
 
 ---
 
-## 8. 校验（`tools/validate_xindb.py`）
+## 8. 校验（`tools/validate_xindb.py` / `tools/accept_xindb.py`）
 
-只读、只用公开 schema，可对"别处建好的库"复核。分组：
+只读、只用公开 schema，可对"别处建好的库"复核。`validate_xindb` 分组：
 
 | 组 | 判据 |
 |---|---|
@@ -171,9 +171,17 @@ CREATE TABLE element_inv (element TEXT PRIMARY KEY, eids BLOB);
 | `M` meta | 必需键齐全；`peak_convention` 等于代码里的常量（不是副本）；`library_kind`/`data_date` 与文件名一致 |
 | `C` chunk 记账 | `Σpeak_chunks.n` = `Σentries.n_peaks` = `entry_count`；块数 = `ceil(N/4096)`；`peak_off` 阶梯连续 |
 | `E` entry 合理性 | 晶胞/体积物理量合法；每相至少一个元素；`peak_n == n_peaks`；`n_peaks ≤ 150` |
-| `P` 反射载荷 | 抽样块解码形状正确；反射有限且为正；强度在 norm-1000 尺度；`n_peaks` 之后是零填充；`top` 块是全反射的子集 |
+| `E5` 单峰坏相 | 穷举每个 chunk 的 `top_d[:,0]`（最强反射）：**最强反射 d 落在 λ/2 边界窗口、且其余峰强度和 < 5/1000（整谱已塌缩）→ FAIL**；`n_peaks==1` 且 d≈1.0 Å（gemmi 占位晶胞）→ FAIL；其它单峰正常 d → WARN |
+| `E6` 空相 | `n_peaks <= 0` 或 NULL → FAIL |
+| `P` 反射载荷 | 抽样块解码形状正确；反射有限且为正；强度在 norm-1000 尺度；`n_peaks` 之后是零填充；`top` 块是全反射的子集；`--all-chunks` 可全块解码 |
 | `X` 元素倒排 | `eids` 值域合法、严格升序去重；抽样相能在自己 `elements` 的每个元素下找到自己 |
 
 ```bash
 python -m tools.validate_xindb COD-Inorg-20261020.xinDB --json out.json
+python -m tools.validate_xindb COD-Inorg-20261020.xinDB --all-chunks   # 发布前全块
 ```
+
+`tools/accept_xindb.py` 是面向发布产物的**通用验收**（6 库一条命令）：全量 id 号段、
+来源归属（源目录 / `inorg_manifest.sqlite` 抽查）、`element_inv` 全量一致性、
+峰载荷（默认全量，可抽样）、坏相穷举；`FAIL` 退出码 1。构建/验收全流程见
+[`构建与验收手册.md`](构建与验收手册.md)。

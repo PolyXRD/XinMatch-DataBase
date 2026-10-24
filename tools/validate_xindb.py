@@ -20,13 +20,53 @@ Checks are grouped and each carries an id:
     global ``peak_off`` ladders are contiguous -- i.e. no phase can point at a
     reflection outside its chunk.
 ``E`` -- entry sanity
-    Lattice parameters and volumes are physical, ``peak_n == n_peaks``, and no
-    entry carries more reflections than ``top_k``.
+    Lattice parameters and volumes are physical, ``peak_n == n_peaks``, no
+    entry carries more reflections than ``top_k``, and the *reflection count*
+    itself is sane:
+
+    ``E5.boundary_peak``
+        The pre-2026-10 peak calculator had two defects that survive into a
+        built library, and both are caught here **exhaustively** (every phase,
+        not a sample):
+
+        * **180 deg boundary artifact** -- the strongest reflection sits at the
+          d-spacing cutoff (``DEFAULT_DMIN`` = 0.7703 A = lambda/2) and the rest
+          of the pattern has collapsed towards zero, because the old
+          Lorentz-polarisation factor diverged at 2theta = 180 deg and the
+          normalized pattern became that one line at 1000.  The collapse
+          condition is what keeps the check specific -- any *real* reflection
+          near the cutoff also becomes the strongest line for the same LP
+          reason, so "strongest d at the cutoff" alone would flag 3-5 % of a
+          healthy library.  Detected from ``peak_chunks.top_d`` column 0 (the
+          strongest reflection, rows are intensity-ordered); also catches the
+          collapsed two-line variant (e.g. ``96-254-30089``: bogus 180 deg line
+          at 1000 plus one real line at 0.013).  **FAIL**;
+        * **placeholder-cell artifact** -- a lone reflection at exactly 1.0 A,
+          the placeholder unit cell gemmi invents for a CIF without
+          ``_cell_*`` tags.  **FAIL**;
+        * any other lone reflection is physically possible (a large cell with
+          one in-window line), so it is reported as **WARN**;
+        * the **semi-collapsed** residual -- strongest reflection at the cutoff
+          but a still-populated pattern -- is reported as **WARN** too (up to 10
+          examples + total, smallest remaining intensity first, e.g. PCOD
+          ``96-244-04910``).  It shares the root cause but is not the build
+          defect, so it does not block acceptance.
+
+        Measured on the shipped libraries: 8 phases in ``COD-Inorg``
+        (5 boundary + 3 placeholder), 7 in ``PCOD-Inorg`` (6 boundary singles +
+        ``96-254-30089``), 0 in ``TCOD-Inorg``.  Semi-collapsed WARN: 2,251 /
+        5,607 / 1,670 (COD / PCOD / TCOD).
+
+    ``E6.peak_count``
+        A phase with ``n_peaks <= 0`` (or ``NULL``) cannot be scored and the
+        writer is not supposed to emit one; the acceptance pass still has to
+        catch it.  **FAIL**.
 ``P`` -- peak payload
-    Sampled chunks decode to the documented shapes; every stored reflection is
-    finite and positive; intensities stay on the ``norm-1000`` scale; the
-    zero-padding after ``n_peaks`` is actually zero; and the prescreen ``top``
-    block is a subset of the phase's full reflection list.
+    Sampled chunks (or every chunk with ``--all-chunks``) decode to the
+    documented shapes; every stored reflection is finite and positive;
+    intensities stay on the ``norm-1000`` scale; the zero-padding after
+    ``n_peaks`` is actually zero; and the prescreen ``top`` block is a subset of
+    the phase's full reflection list.
 ``X`` -- element inverted index
     Sampled phases find themselves in ``element_inv`` under every symbol listed
     in ``entries.elements``, and every ``eid`` is a valid entry index.
@@ -37,13 +77,13 @@ Usage::
 
     python -m tools.validate_xindb data/COD-Inorg-20261020.xinDB
     python -m tools.validate_xindb data/COD-Full-20261020.xinDB --json out.json
+    python -m tools.validate_xindb data/COD-Inorg-20261020.xinDB --all-chunks
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import math
 import random
 import sqlite3
 import sys
@@ -57,9 +97,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from xinmatch.core.db.peak_compute import DEFAULT_MAX_PEAKS  # noqa: E402
-from xinmatch.core.db.peak_compute import INTENSITY_SCALE  # noqa: E402
-from xinmatch.core.db.peak_compute import PEAK_CONVENTION  # noqa: E402
+from xinmatch.core.db.peak_compute import (  # noqa: E402
+    DEFAULT_DMIN,
+    DEFAULT_MAX_PEAKS,
+    INTENSITY_SCALE,
+    PEAK_CONVENTION,
+)
 from xinmatch.core.db.schema_v3 import META_KEYS, REQUIRED_TABLES  # noqa: E402
 
 #: Intensity scale the ``norm-1000`` convention promises.  A phase's strongest
@@ -70,6 +113,45 @@ NORM_SCALE = float(INTENSITY_SCALE)
 #: Slack for the normalisation check: the writer rescales with a float32
 #: division, so the maximum can be a few ULP off 1000.
 NORM_TOL = 0.05
+
+#: Lower slack of the ``E5`` boundary window.  ``0.7703`` is stored as float32
+#: ``0.77029997``, so the artifact never lands exactly on ``DEFAULT_DMIN``.
+DMIN_LOW_SLACK = 1e-6
+
+#: Upper slack of the ``E5`` boundary window.  The bogus line is an ulp *above*
+#: ``lambda/2`` (``0.7703000000000001`` before float32 rounding); a few 1e-3 A
+#: is generous but still far below the ~0.01 A matching window, so a genuine
+#: reflection cannot be swallowed.
+DMIN_HIGH_SLACK = 1e-3
+
+#: A *collapsed* 180 deg artifact puts essentially the whole normalised
+#: intensity into the bogus boundary line: everything else sums to less than
+#: this on the ``norm-1000`` scale (0.5 %).  This second condition is what makes
+#: the strongest-reflection scan usable -- every *real* reflection that happens
+#: to fall near 2theta = 180 deg also becomes the strongest one, because the
+#: Lorentz-polarisation factor diverges there, so "strongest d is at the cutoff"
+#: alone would flag 3-5 % of a healthy library (measured: 2,256 COD / 5,614 PCOD
+#: / 1,670 TCOD phases).  Only a pattern whose intensity has actually collapsed
+#: onto that line is the pre-2026-10 engine bug.
+BOUNDARY_COLLAPSE_MAX = 5.0
+
+#: d-spacing of the placeholder unit cell gemmi invents for a CIF with no
+#: ``_cell_*`` tags (a = b = c = 1.0 A).  The old engine emitted its single
+#: (1, 1, 1) line at exactly this value.
+PLACEHOLDER_D = 1.0
+
+#: Tolerance of the placeholder-cell comparison (float32 rounding of 1.0 is
+#: exact, so this is only there to absorb a sloppy legacy writer).
+PLACEHOLDER_TOL = 1e-3
+
+#: How many offending entry ids a check detail line quotes (the acceptance
+#: report has to be able to drive a targeted rebuild, so a small set of bad
+#: phases is listed in full; only a systemic failure is truncated).
+MAX_QUOTED_IDS = 500
+
+#: How many of the *semi-collapsed* boundary phases (strongest reflection at the
+#: cutoff, but a still-populated pattern) a WARN line quotes, plus the total.
+MAX_BOUNDARY_WARN_QUOTED = 10
 
 #: Lattice parameters outside these bounds are not physical for a crystal
 #: structure; COD does contain a handful of garbage cells and the build is
@@ -309,7 +391,7 @@ def _check_entries(conn: sqlite3.Connection, rep: Report, meta: dict[str, str], 
         bounds,
     ).fetchone()
     labels = ("a", "b", "c", "volume", "alpha", "beta", "gamma")
-    bad = {lbl: int(v) for lbl, v in zip(labels, row) if int(v)}
+    bad = {lbl: int(v) for lbl, v in zip(labels, row, strict=True) if int(v)}
     total = int(conn.execute("SELECT count(*) FROM entries").fetchone()[0] or 0)
     if bad:
         detail = ", ".join(f"{k}={v:,}" for k, v in bad.items())
@@ -376,6 +458,278 @@ def _check_entries(conn: sqlite3.Connection, rep: Report, meta: dict[str, str], 
         rep.ok("E4.max_peaks", f"n_peaks <= {DEFAULT_MAX_PEAKS} (max {max_peaks})")
 
 
+def _decode_lone_reflections(
+    conn: sqlite3.Connection,
+    rows: list[tuple[int, str, int]],
+    chunk_size: int,
+) -> list[tuple[str, float | None]]:
+    """Return ``(entry_id, d)`` for every ``n_peaks == 1`` entry in *rows*.
+
+    Only the handful of single-reflection phases are decoded, but every
+    ``peak_chunks`` row they live in is fetched at most once: on the 1.7 GiB
+    PCOD library this costs six small block reads instead of a full payload
+    scan, which is what makes ``E5`` affordably *exhaustive*.
+
+    ``d`` is ``None`` when the stored slice cannot be located (a symptom the
+    ``C``/``P`` checks report separately; ``E5`` must not crash on it).
+    """
+    cache: dict[int, tuple[int, bytes]] = {}
+    decoded: list[tuple[str, float | None]] = []
+    for rowid, entry_id, peak_off in rows:
+        chunk_id = int(rowid) // chunk_size
+        cached = cache.get(chunk_id)
+        if cached is None:
+            row = conn.execute(
+                "SELECT n, all_d FROM peak_chunks WHERE chunk_id = ?", (chunk_id,)
+            ).fetchone()
+            if row is None:
+                cached = (-1, b"")
+            else:
+                base = conn.execute(
+                    "SELECT peak_off FROM entries WHERE rowid = ?",
+                    (chunk_id * chunk_size,),
+                ).fetchone()
+                cached = (
+                    int(base[0]) if base is not None else -1,
+                    bytes(row[1] or b""),
+                )
+            cache[chunk_id] = cached
+        base, payload = cached
+        lo = int(peak_off) - base
+        value: float | None = None
+        if base >= 0 and lo >= 0 and (lo + 1) * 4 <= len(payload):
+            value = float(np.frombuffer(payload[lo * 4 : (lo + 1) * 4], dtype="<f4")[0])
+        decoded.append((str(entry_id), value))
+    return decoded
+
+
+def _format_d(value: float | None) -> str:
+    return "?" if value is None else f"{value:.4f}"
+
+
+def _scan_boundary_strongest(
+    conn: sqlite3.Connection,
+    rep: Report,
+    chunk_size: int,
+    top_k: int,
+) -> tuple[
+    list[tuple[str, float, int]],
+    list[tuple[str, float, int, float]],
+]:
+    """Return the two boundary-phase classes keyed on the strongest reflection.
+
+    The prescreen block is exactly what is needed: ``top_d`` rows are ordered by
+    intensity, so column 0 is the phase's *strongest* reflection, and column 0
+    of ``top_i`` is ~1000 by the ``norm-1000`` convention.  A phase is bucketed
+    by the strongest reflection's d and by the sum of every *other* stored
+    intensity:
+
+    * ``collapsed`` -- strongest d in the boundary window **and** the rest of
+      the pattern summed below :data:`BOUNDARY_COLLAPSE_MAX` (the actual
+      pre-2026-10 normalization bug: the exploded 180 deg line became the whole
+      pattern).  ``(entry_id, d, n_peaks)``.
+    * ``semi_collapsed`` -- strongest d in the boundary window but the pattern
+      is still populated.  ``(entry_id, d, n_peaks, rest_sum)``; these are
+      **WARN**, not FAIL: a real reflection near 2theta = 180 deg legitimately
+      becomes the strongest line because the Lorentz-polarisation factor
+      diverges there, and thousands of healthy phases fall in this bucket.
+      Quoting the smallest ``rest_sum`` first surfaces the borderline cases
+      that look most like the collapse artifact.
+
+    The scan is exhaustive (every chunk, every phase) and independent of
+    ``--sample-chunks``; it costs one ``top_d``/``top_i`` decode per chunk, i.e.
+    ~136 MB on the 1.06 M-phase PCOD library.
+    """
+    collapsed: list[tuple[str, float, int]] = []
+    semi_collapsed: list[tuple[str, float, int, float]] = []
+    for chunk_id, n, top_d_blob, top_i_blob in conn.execute(
+        "SELECT chunk_id, n, top_d, top_i FROM peak_chunks ORDER BY chunk_id"
+    ):
+        n = int(n)
+        top_d = _decode_matrix(top_d_blob, n, top_k)
+        top_i = _decode_matrix(top_i_blob, n, top_k)
+        strongest = top_d[:, 0]
+        rest_sum = top_i[:, 1:].sum(axis=1)
+        window = (strongest >= DEFAULT_DMIN - DMIN_LOW_SLACK) & (
+            strongest <= DEFAULT_DMIN + DMIN_HIGH_SLACK
+        )
+        if not window.any():
+            continue
+        collapsed_mask = window & (rest_sum < BOUNDARY_COLLAPSE_MAX)
+        semi_mask = window & ~collapsed_mask
+        entries = conn.execute(
+            "SELECT entry_id, n_peaks FROM entries WHERE rowid >= ? AND rowid < ? "
+            "ORDER BY rowid",
+            (int(chunk_id) * chunk_size, int(chunk_id) * chunk_size + n),
+        ).fetchall()
+        if len(entries) != n:
+            rep.warn(
+                "E5.boundary_peak",
+                f"chunk {int(chunk_id)}: {len(entries)} entries at that offset, "
+                f"chunk says {n} (see C2/C5)",
+            )
+            continue
+        for index in np.flatnonzero(collapsed_mask):
+            entry_id, n_peaks = entries[int(index)]
+            collapsed.append((str(entry_id), float(strongest[int(index)]), int(n_peaks)))
+        for index in np.flatnonzero(semi_mask):
+            entry_id, n_peaks = entries[int(index)]
+            semi_collapsed.append(
+                (
+                    str(entry_id),
+                    float(strongest[int(index)]),
+                    int(n_peaks),
+                    float(rest_sum[int(index)]),
+                )
+            )
+    return collapsed, semi_collapsed
+
+
+def _check_peak_inventory(
+    conn: sqlite3.Connection,
+    rep: Report,
+    meta: dict[str, str],
+) -> None:
+    """``E5.boundary_peak`` / ``E6.peak_count``: the two known bad-phase classes.
+
+    ``E5`` is anchored on the **strongest reflection** of every phase (encoded
+    in ``peak_chunks.top_d`` column 0), not just on single-reflection phases, so
+    it also catches a pattern that collapsed to two lines (the real structure
+    keeps one tiny line that survived the bogus normalization).
+
+    Three signatures, exhaustive over every ``entries`` row:
+
+    * **180 deg boundary artifact** -- strongest reflection at the
+      ``DEFAULT_DMIN`` cutoff (``lambda/2``) *and* the rest of the pattern
+      summed far below the norm scale (see :data:`BOUNDARY_COLLAPSE_MAX`) ->
+      **FAIL**;
+    * **placeholder-cell artifact** -- a lone reflection at 1.0 A, which is the
+      ``a = b = c = 1.0 A`` cell gemmi invents for a CIF without ``_cell_*``
+      tags -> **FAIL**;
+    * any other lone reflection is physically possible (a large cell with one
+      in-window line) -> **WARN**.
+
+    The first class used to be detected only through ``n_peaks == 1``; that
+    missed e.g. PCOD ``96-254-30089`` (n_peaks = 2: the bogus 180 deg line at
+    1000 plus one real line at 0.013).  Anchoring on the strongest reflection
+    generalises the check without changing its cost class.
+    """
+    try:
+        chunk_size = int(meta.get("chunk_size", "0"))
+        top_k = int(meta.get("top_k", "0"))
+    except ValueError:
+        chunk_size = top_k = 0
+    if chunk_size <= 0 or top_k <= 0:
+        rep.warn(
+            "E5.boundary_peak",
+            f"cannot enumerate bad phases: meta.chunk_size={meta.get('chunk_size')!r} "
+            f"meta.top_k={meta.get('top_k')!r}",
+        )
+        return
+
+    # -- E6: a phase that stores no reflection at all -----------------------
+    empty = [
+        str(row[0])
+        for row in conn.execute(
+            "SELECT entry_id FROM entries WHERE n_peaks IS NULL OR n_peaks <= 0 ORDER BY rowid"
+        )
+    ]
+    if empty:
+        rep.fail(
+            "E6.peak_count",
+            f"{len(empty):,} phases store no reflection at all "
+            f"(n_peaks <= 0; e.g. {', '.join(empty[:5])})",
+        )
+    else:
+        rep.ok("E6.peak_count", "every phase stores at least one reflection")
+
+    # -- E5a: strongest reflection at the 2theta=180 deg cutoff -------------
+    boundary, semi_collapsed = _scan_boundary_strongest(conn, rep, chunk_size, top_k)
+    boundary_ids = {entry_id for entry_id, _d, _n in boundary}
+
+    # -- E5b/E5c: lone reflections (1.0 A placeholder vs plausible) ---------
+    singles = [
+        (int(rowid), str(entry_id), int(peak_off))
+        for rowid, entry_id, peak_off in conn.execute(
+            "SELECT rowid, entry_id, peak_off FROM entries WHERE n_peaks = 1 ORDER BY rowid"
+        )
+    ]
+    placeholder: list[tuple[str, float]] = []
+    normal: list[tuple[str, float]] = []
+    undecodable: list[str] = []
+    for entry_id, value in _decode_lone_reflections(conn, singles, chunk_size):
+        if value is None:
+            undecodable.append(entry_id)
+        elif entry_id in boundary_ids:
+            continue  # already reported by the strongest-reflection scan
+        elif abs(value - PLACEHOLDER_D) <= PLACEHOLDER_TOL:
+            placeholder.append((entry_id, value))
+        else:
+            normal.append((entry_id, value))
+
+    if boundary or placeholder:
+        parts: list[str] = []
+        if boundary:
+            parts.append(
+                f"{len(boundary)} with the strongest reflection at the "
+                f"{DEFAULT_DMIN} A cutoff (2theta=180 deg) and the rest of the "
+                f"pattern collapsed"
+            )
+        if placeholder:
+            parts.append(
+                f"{len(placeholder)} holding a lone {PLACEHOLDER_D} A "
+                f"placeholder-cell line"
+            )
+        samples = [
+            f"{entry_id}(d={_format_d(d)})" for entry_id, d, _n in boundary[:MAX_QUOTED_IDS]
+        ]
+        samples += [
+            f"{entry_id}(d={_format_d(d)})" for entry_id, d in placeholder[:MAX_QUOTED_IDS]
+        ]
+        quoted = samples[:MAX_QUOTED_IDS]
+        total = len(boundary) + len(placeholder)
+        more = "" if total <= MAX_QUOTED_IDS else f" ... {total - MAX_QUOTED_IDS} more"
+        rep.fail(
+            "E5.boundary_peak",
+            f"{total} bogus phases: " + "; ".join(parts) + f"; e.g. {', '.join(quoted)}{more}",
+        )
+    if normal:
+        samples = ", ".join(
+            f"{entry_id}(d={_format_d(value)})"
+            for entry_id, value in normal[:MAX_QUOTED_IDS]
+        )
+        rep.warn(
+            "E5.boundary_peak",
+            f"{len(normal)} phases hold exactly one reflection at a plausible "
+            f"d-spacing (not a known engine artifact): {samples}",
+        )
+    if semi_collapsed:
+        # Same root cause (a reflection computed at lambda/2), but the pattern
+        # is still populated, so a real reflection near 180 deg is the strongest
+        # line.  Not a build defect: WARN, most-collapse-like cases first.
+        semi_collapsed.sort(key=lambda item: item[3])
+        samples = ", ".join(
+            f"{entry_id}(d={_format_d(d)}, n={n_peaks}, rest_sum={rest_sum:.3f})"
+            for entry_id, d, n_peaks, rest_sum in semi_collapsed[:MAX_BOUNDARY_WARN_QUOTED]
+        )
+        rep.warn(
+            "E5.boundary_peak",
+            f"{len(semi_collapsed)} phases have their strongest reflection in the "
+            f"{DEFAULT_DMIN} A cutoff window but a still-populated pattern, so they are "
+            f"NOT counted as bad phases (a real reflection near 2theta=180 deg is "
+            f"legitimately the strongest line there); closest to the collapse boundary: "
+            f"{samples}",
+        )
+    if undecodable:
+        rep.warn(
+            "E5.boundary_peak",
+            f"{len(undecodable)} lone reflections could not be decoded "
+            f"(see C/P checks): {', '.join(undecodable[:5])}",
+        )
+    if not boundary and not placeholder and not normal:
+        rep.ok("E5.boundary_peak", "no bogus boundary/placeholder phase")
+
+
 def _check_payload(
     conn: sqlite3.Connection,
     rep: Report,
@@ -398,7 +752,12 @@ def _check_payload(
         rep.fail("P1.sample", "no chunks to sample")
         return
     rng = random.Random(seed)
-    picked = sorted(rng.sample(ids, min(sample, len(ids))))
+    # ``sample < 0`` is the ``--all-chunks`` sentinel: decode every block.
+    if sample < 0:
+        picked = sorted(ids)
+        rep.info("P1.all_chunks", f"decoded all {len(picked):,} chunks")
+    else:
+        picked = sorted(rng.sample(ids, min(sample, len(ids))))
 
     problems: list[str] = []
     checked_entries = 0
@@ -597,7 +956,13 @@ def _split_elements(raw: object) -> list[str]:
 
 
 def validate(db: Path, sample_chunks: int, sample_entries: int, seed: int = 0) -> Report:
-    """Run every check against *db* and return the populated report."""
+    """Run every check against *db* and return the populated report.
+
+    ``sample_chunks`` is the number of ``peak_chunks`` blocks decoded by the
+    payload check; a **negative** value means "all chunks" (the
+    ``--all-chunks`` mode).  The ``E5``/``E6`` reflection-count checks are
+    always exhaustive and do not depend on this parameter.
+    """
     rep = Report()
     if not db.exists():
         rep.fail("F0.exists", f"no such file: {db}")
@@ -619,6 +984,7 @@ def validate(db: Path, sample_chunks: int, sample_entries: int, seed: int = 0) -
         meta = _check_meta(conn, rep, db)
         entries, _total_peaks, max_peaks = _check_counts(conn, rep, meta)
         _check_entries(conn, rep, meta, max_peaks)
+        _check_peak_inventory(conn, rep, meta)
         _check_payload(conn, rep, meta, sample_chunks, seed)
         _check_element_index(conn, rep, entries, sample_entries, seed)
     except sqlite3.Error as exc:
@@ -633,13 +999,25 @@ def validate(db: Path, sample_chunks: int, sample_entries: int, seed: int = 0) -
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("db", type=Path, help=".xinDB file to validate (opened read-only)")
-    ap.add_argument("--sample-chunks", type=int, default=8, help="chunks decoded and checked")
+    ap.add_argument(
+        "--sample-chunks",
+        type=int,
+        default=8,
+        help="chunks decoded and checked (default 8; see --all-chunks)",
+    )
+    ap.add_argument(
+        "--all-chunks",
+        action="store_true",
+        help="decode every chunk instead of a sample (wins over --sample-chunks); "
+        "the report states how many chunks were actually decoded",
+    )
     ap.add_argument("--sample-entries", type=int, default=300, help="entries checked against element_inv")
     ap.add_argument("--seed", type=int, default=0, help="sampling seed")
     ap.add_argument("--json", type=Path, default=None, help="write the report as JSON here")
     args = ap.parse_args(argv)
 
-    rep = validate(args.db, args.sample_chunks, args.sample_entries, args.seed)
+    sample_chunks = -1 if args.all_chunks else args.sample_chunks
+    rep = validate(args.db, sample_chunks, args.sample_entries, args.seed)
     print(f"validate_xindb: {args.db}")
     print(rep.render())
     verdict = "FAILED" if rep.fails else ("PASSED WITH WARNINGS" if rep.warns else "PASSED")

@@ -84,7 +84,7 @@ def compare(left: Path, right: Path) -> int:
 
     mismatched = 0
     total = 0
-    for cid, n in grid_a:
+    for cid, _n in grid_a:
         row_a = a.execute(
             "SELECT top_d, top_i, all_d, all_i FROM peak_chunks WHERE chunk_id = ?", (cid,)
         ).fetchone()
@@ -93,7 +93,7 @@ def compare(left: Path, right: Path) -> int:
         ).fetchone()
         total += 1
         for name, blob_a, blob_b in zip(
-            ("top_d", "top_i", "all_d", "all_i"), row_a, row_b
+            ("top_d", "top_i", "all_d", "all_i"), row_a, row_b, strict=True
         ):
             if _chunk_digest(blob_a) != _chunk_digest(blob_b):
                 mismatched += 1

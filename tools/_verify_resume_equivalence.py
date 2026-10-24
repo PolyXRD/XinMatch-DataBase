@@ -174,7 +174,7 @@ def real_phases(n: int):
     with ProcessPoolExecutor(
         max_workers=workers, initializer=_init_worker, initargs=(0.7703, 150)
     ) as pool:
-        for cod_id, meta, d_arr, i_arr, reason in pool.map(_compute_one, tasks, chunksize=8):
+        for _cod_id, meta, d_arr, i_arr, reason in pool.map(_compute_one, tasks, chunksize=8):
             if reason:
                 continue
             out.append((meta, d_arr, i_arr))
