@@ -58,6 +58,23 @@ python -m tools.validate_xindb COD-Inorg-20261020.xinDB   # 可选：自检 25 �
 > ⚠️ 文件名必须是 `<library_kind>-<data_date>.xinDB`，否则 `validate_xindb` 的
 > `M3.identity` 会判 FAIL（它拿文件名和 `meta` 对账）。改名后重新建库即可，不必修 meta。
 
+### 1.1 2026-11-01 重建（峰引擎修复后，`data/` 内本地产物）
+
+2026-10 修复了两类「假峰相」：2θ=180° 边界（`d=λ/2`）反射被浮点舍入放进峰表 + LP 发散导致整谱塌缩；
+gemmi 读不到晶胞时用默认占位晶胞算出 `d=1.0` 假峰。用修复后的引擎重建三个 Inorg 库，
+**源快照仍为 `20261020`**（`meta.data_date` 不变），旧库已移到 `data/_prev/` 以便对比：
+
+| 库 | 相数 | 反射数 | 体积（字节） | SHA-256（前 16） | 验收 |
+|---|---|---|---|---|---|
+| **COD-Inorg**（重建） | **78,035** | **9,395,681** | **118,640,640**（113.1 MiB） | `7C08B34DCACA9BAC…` | validate 0F/1W（30 项）；accept 0F/1W；7 条坏相修复、1 条无晶胞相剔除 |
+| **TCOD-Inorg**（重建） | **46,846** | **5,874,790** | **71,352,320**（68.0 MiB） | `8F2A25D583B577A7…` | validate 0F/1W（29 项）；accept 0F/1W；与旧库逐条目 `(d,i)` **完全相同** |
+| **PCOD-Inorg** | 重建进行中 | — | — | — | 完成后补录 |
+
+- 验收细节、坏相逐条清单与前后对比见 [`docs/ACCEPTANCE-20261101-rebuild.md`](docs/ACCEPTANCE-20261101-rebuild.md)。
+- **Release 附件（三个 zip）本轮未重打**：`20261020` Release 里仍是 2026-10 的旧库；
+  需要对外发布修复版时，按构建手册 §5 重新打 zip 并更新 `SHA256SUMS.txt`。
+- `data/_prev/` 里的旧库仅用于前后对比；确认无需回滚后可删除（COD 113 MB + TCOD 68 MB + PCOD 1.7 GB）。
+
 ---
 
 ## 2. `.xinDB` 是什么
@@ -158,36 +175,38 @@ CIF 根 / `library_kind` / id 偏移自动推导；`tools/build_cod_inorg_xindb.
 
 ```bash
 # 三个无机库（交互检索默认库，体积小、构建快）
-python -m tools.build_cod_xindb --source COD  --set inorg --data-date 20261020 --workers 8 -v
-python -m tools.build_cod_xindb --source PCOD --set inorg --data-date 20261020 --workers 8 -v
-python -m tools.build_cod_xindb --source TCOD --set inorg --data-date 20261020 --workers 8 -v
+python -m tools.build_cod_xindb --source COD  --set inorg --data-date 20261020 --workers 14 -v
+python -m tools.build_cod_xindb --source PCOD --set inorg --data-date 20261020 --workers 14 -v
+python -m tools.build_cod_xindb --source TCOD --set inorg --data-date 20261020 --workers 14 -v
 
 # 三个全库（exhaustive reference；耗时小时级，见手册 §3.6）
-python -m tools.build_cod_xindb --source COD  --set full --data-date 20261020 --workers 8 -v
-python -m tools.build_cod_xindb --source PCOD --set full --data-date 20261020 --workers 8 -v
-python -m tools.build_cod_xindb --source TCOD --set full --data-date 20261020 --workers 8 -v
+python -m tools.build_cod_xindb --source COD  --set full --data-date 20261020 --workers 14 -v
+python -m tools.build_cod_xindb --source PCOD --set full --data-date 20261020 --workers 14 -v
+python -m tools.build_cod_xindb --source TCOD --set full --data-date 20261020 --workers 14 -v
 ```
 
 - 输出默认 `<repo>/data/<kind>-<data_date>.xinDB`；`--out` 指定任意路径，`XINMATCH_XINDB_DIR` 仅显式覆盖。
 - `--limit N` 先试产（**永远先跑切片并 validate 全绿再跑全量**）；`--resume` 断点续跑（== 一次跑完，已验证）；
   `--start` 从指定号段起；`--workers` 与输出无关（1 vs 2 逐字节一致，有回归）。
-  `--workers` 取**物理核数**（本机 8C/16T 实测 8 最优，14 无提升）。
+- **`--workers` 用 14（本机 8C/16T 真实全库实测最优）**：TCOD 46,846 相 15.2 min（旧实现 14 workers 为 16.9 min）；
+  COD 用 8 workers 跑 61.6 min，反而略慢于历史 14 workers 的 58 min —— 500 相切片基准会低估多 worker 的收益，
+  不要据此把 workers 降到 8。
 - 构建热路径用 `build_pipeline.compute_phase()`，**每个 CIF 只解析一次**（旧实现 3 次解析 + 2 次结构构建）；
   结构因子分块按原子数自适应（256–8192 行），两项优化**输出逐位不变**，整库吞吐约 +10–15%（详见手册 §3.7）。
 - 源码默认 `max_peaks=150`、`dmin=0.7703`（= λ/2），要改峰口径请同时改
   `peak_compute.PEAK_CONVENTION`，否则 `meta` 与实际不符、校验器会拦。
 - `--kind full|inorg` 仅为 COD 的向后兼容别名（与 `--set` 同给会报错）。
 
-### 3.4 实测规模
+### 3.4 实测规模（2026-11-01 重建后）
 
-| 库 | 相数 | 反射数 | 平均峰/相 | 文件 |
-|---|---|---|---|---|
-| COD-Inorg | 78,036 | 9,394,774 | 120.4（min 1 / max 150） | 113.2 MiB |
-| PCOD-Inorg | 1,061,953 | 159,274,265 | 149.98（581 相 <150） | 1694.1 MiB |
-| TCOD-Inorg | 46,846 | 5,874,790 | 125.4（min 3 / max 150） | 68.0 MiB |
+| 库 | 相数 | 反射数 | 平均峰/相 | 文件 | 构建耗时（14 workers 基准） |
+|---|---|---|---|---|---|
+| COD-Inorg | **78,035** | **9,395,681** | 120.4（min 2 / max 150） | **113.1 MiB** | 61.6 min（`--workers 8`；14 workers 应更快） |
+| PCOD-Inorg | 1,061,953（重建中） | 159,274,265（旧） | 149.98（581 相 <150） | 1694.1 MiB（旧） | 旧实现 12.7 h；本次重建进行中 |
+| TCOD-Inorg | **46,846** | **5,874,790** | 125.4（min 3 / max 150） | **68.0 MiB** | **15.2 min**（旧实现 16.9 min） |
 
-旧实现实测约 **1,590 相/分钟（单进程，COD 切片）**，`--workers` 线性摊薄；
-2026-10 的单次解析优化后吞吐见 [`docs/构建与验收手册.md`](docs/构建与验收手册.md) §3.7。
+> 旧实现单进程约 1,590 相/分钟（COD 切片）；2026-10 的单次解析 + 自适应分块优化后整库吞吐约 +10–15%，
+> 详见 [`docs/构建与验收手册.md`](docs/构建与验收手册.md) §3.7。
 
 ---
 
@@ -213,10 +232,11 @@ python -m tools._compare_xindb_peaks.py <旧库> <新库>          # 只改元�
 python -m tools._verify_resume_equivalence                     # --resume 等价于一次跑完
 ```
 
-> ⚠️ **已发布 20261020 三个库在新版 `E5` 下是 FAIL**，因为它们由旧峰引擎构建：
-> COD **8 条**（5×180° 单峰 + 3×d=1.0 单峰）、PCOD **7 条**（6 单峰 + `96-254-30089` 塌缩双峰）、TCOD 0 条。
-> 引擎已修复（`peak_compute` 的 2θ=180° 边界 + 占位晶胞恢复），**重建后应全部归零**；
-> 重建前这三个库只应作为"已知坏相登记"的产物使用。详见 §6 与构建手册 §6。
+> ✅ **2026-11-01 已用修复后的引擎重建**：COD 库 8 条坏相已全部清除（7 条恢复真峰、1 条无晶胞相剔除，
+> 相数 78,036→78,035），TCOD 无坏相且峰载荷逐字节不变；两库 `validate_xindb --all-chunks` 与
+> `accept_xindb` 均 **0 FAIL**。PCOD 重建进行中，完成后补录。
+> 更早的 `20261020` Release 库（旧 zip）在新版 `E5` 下仍会报 COD 8 / PCOD 7 条 FAIL。
+> 详见 [`docs/ACCEPTANCE-20261101-rebuild.md`](docs/ACCEPTANCE-20261101-rebuild.md)。
 
 ---
 
@@ -225,7 +245,7 @@ python -m tools._verify_resume_equivalence                     # --resume 等价
 ```
 .
 ├── _atomic_scattering_params.json Cromer-Mann 系数（fastxrd 按 tools/../ 找它）
-├── data/                          **本地产物目录**（不入仓）：6 个库（当前已发布 Inorg 三库）
+├── data/                          **本地产物目录**（不入仓）：重建后的 Inorg 三库 + `_prev/` 旧库 + 构建日志
 ├── pytest.ini  tests/             工具链回归测试（合成 CIF/归档，不依赖 1.8 GiB 真实库）
 ├── tmp/                           本地试产/bench/验收 JSON（不入仓，.gitignore）
 ├── xinmatch/                      **构库子集**（完整程序见 PolyXRD/XinMatch）
@@ -258,7 +278,8 @@ python -m tools._verify_resume_equivalence                     # --resume 等价
 （完整版会 `import scipy` 等，构库不需要）。其余检索/精修/GUI 模块见完整版仓库。
 
 不入仓（`.gitignore`）：`data/ *.xinDB *.db *.sqlite tmp/ _release/ __pycache__/`。
-本机 `data/` 里目前放着三个已发布的 Inorg 库（118.7 MB / 1.78 GB / 71.4 MB）。
+本机 `data/` 当前放着重后的 Inorg 库（COD 113.1 MB / TCOD 68.0 MB / PCOD 重建中）、
+`data/_prev/`（重建前旧库，供对比/回滚）与 `data/_build-20261101-*.log`。
 
 ---
 
@@ -266,10 +287,10 @@ python -m tools._verify_resume_equivalence                     # --resume 等价
 
 | 项 | 现状 | 影响 |
 |---|---|---|
-| **已发布库的坏相** | COD **8 条**（5×180° 单峰 + 3×d=1.0 占位晶胞）、PCOD **7 条**（6 单峰 + `96-254-30089` 塌缩双峰）、TCOD 0 条 | 由**旧峰引擎**构建；引擎已修复（2θ=180° 边界 + 占位晶胞恢复），**重建后应归零**。重建前请按"已知坏相"登记（entry_id 见构建手册 §6） |
-| 半塌缩边界相（WARN） | COD 2,251 / PCOD 5,607 / TCOD 1,670 条：最强线落在 d≈λ/2（2θ→180°），其余峰存在（强度和 ≥5/1000） | 真实反射 + LP 在 180° 发散导致的**峰口径边缘现象**，不是假峰，**重建不会消除**；根治需改峰口径（`DEFAULT_DMIN` 抬到 0.78–0.79 Å 或剔除 2θ>179°，属 v4 决策）。当前仅 WARN，不阻塞发布 |
-| 退化晶胞 | COD 库 1 条（`96-210-4629`，库内晶胞字段为 NULL） | 重建时源 CIF 无可用晶胞 → 该相被剔除（78,036 → 78,035） |
-| 无空间群 | COD 库 127 条（`E3` 仅提示） | 不影响峰位；按空间群过滤时这类相会被排除 |
+| **重建前旧库的坏相** | 旧 `20261020` Release：COD 8 条、PCOD 7 条、TCOD 0 条 | 用旧峰引擎构建；**2026-11-01 重建后 COD/TCOD 已 0 条**（PCOD 重建中）。旧 zip 如需对外使用，请替换为重建版 |
+| 半塌缩边界相（WARN） | COD 2,251 / PCOD 5,607 / TCOD 1,670 条：最强线落在 d≈λ/2（2θ→180°），其余峰存在（强度和 ≥5/1000） | 真实反射 + LP 在 180° 发散导致的**峰口径边缘现象**，不是假峰，**重建也不会消除**；根治需改峰口径（`DEFAULT_DMIN` 抬到 0.78–0.79 Å 或剔除 2θ>179°，属 v4 决策）。当前仅 WARN，不阻塞发布 |
+| 退化晶胞 | 重建后 COD 库已无（`96-210-4629` 源 CIF 无晶胞 → 建库时剔除） | — |
+| 无空间群 | COD 库 126 条（重建前 127，`96-210-4629` 已剔除；`E3` 仅提示） | 不影响峰位；按空间群过滤时这类相会被排除 |
 | 全库发布 | **构建已支持** 6 库（`--source × --set`）；`20261020` release 只发布了 Inorg 三库 | 有机/全库检索需先构建 `*-Full` 库（耗时小时级，见构建手册 §3.6） |
 | PCOD 元素面窄 | 只有 19 种元素（O/Si/P/Al/V/S/B/F…） | GRINSP 预测集的客观构成，不是建库丢数据 |
 | `top_i` 为 float32 | 强度用 `<f4` 而非量化整数 | 体积换精度；norm-1000 下有效位足够 |
@@ -296,3 +317,4 @@ python -m tools._verify_resume_equivalence                     # --resume 等价
 | 2026-10-23 | **源数据迁出** → `D:/Project/XRD/sync-COD`（两库共用），`XRD_DATA_ROOT` 缺省改为该路径；`build_dbs.py` 剥成纯函数模块 `cif_common.py`（旧 3COD sqlite 打包器删除） |
 | 2026-10-23 | 数据侧工具独立成公开仓库 [**PolyXRD/sync-COD**](https://github.com/PolyXRD/sync-COD)（数据仍不入库） |
 | 2026-10-24 | **构库/验收工具重建**：统一六库构建入口（`--source × --set`，含 PCOD/TCOD Full）；新增 `build_pipeline.compute_phase()` 单次解析；新增 `accept_xindb.py` 通用验收与 `E5/E6` 坏相检查；建立 `tests/` 回归（合成 CIF，不依赖真实库）；新增 [`docs/构建与验收手册.md`](docs/构建与验收手册.md) 并记录「库在本仓库构建、CIF 源在 `sync-COD`」约定 |
+| 2026-11-01 | **用修复后的峰引擎重建三个 Inorg 库**（源快照仍 `20261020`）：COD 78,036→**78,035** 相 / 9,395,681 反射（8 条坏相清除）；TCOD 46,846 相、峰载荷与旧库逐字节相同；PCOD 重建中。验收见 [`docs/ACCEPTANCE-20261101-rebuild.md`](docs/ACCEPTANCE-20261101-rebuild.md) |
