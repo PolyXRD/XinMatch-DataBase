@@ -69,8 +69,8 @@ gemmi 读不到晶胞时用默认占位晶胞算出 `d=1.0` 假峰。用修复�
 | **COD-Inorg**（重建） | **78,035** | **9,395,681** | **118,640,640**（113.1 MiB） | `7C08B34DCACA9BAC…` | validate 0F/1W（30 项）；accept 0F/1W；7 条坏相修复、1 条无晶胞相剔除 |
 | **TCOD-Inorg**（重建） | **46,846** | **5,874,790** | **71,352,320**（68.0 MiB） | `8F2A25D583B577A7…` | validate 0F/1W（29 项）；accept 0F/1W；与旧库逐条目 `(d,i)` **完全相同** |
 | **PCOD-Inorg**（重建） | **1,061,953** | **159,275,318** | **1,777,357,376**（1694.1 MiB） | `ABB7EC8C1E68CD6F…` | validate 0F/1W（29 项）；accept 0F/1W；7 条坏相修复；17/1,061,953 条载荷变化 |
-| **TCOD-Full** | 构建中 | — | — | — | 完成后补录 |
-| **COD-Full** | 排队中 | — | — | — | 完成后补录 |
+| **TCOD-Full**（新库） | **361,701** | **53,099,238** | **623,173,632**（594.3 MiB） | `36838FBE1F18EDBF…` | validate 0F/2W（29 项）；accept 0F/1W；与 TCOD-Inorg 公共相 46,846/46,846 逐字节相同；自重召回 10/10 |
+| **COD-Full** | 构建中 | — | — | — | 完成后补录 |
 
 > **PCOD-Full 不构建**：PCOD 归档 1,061,962 条 CIF **全部为无机**（manifest `is_inorg=1` 100%），
 > 与 `PCOD-Inorg` 实质等价（原始归档仅差 2 个未入库 CIF），按决定跳过。
@@ -209,7 +209,8 @@ python -m tools.build_cod_xindb --source TCOD --set full --data-date 20261020 --
 | COD-Inorg | **78,035** | **9,395,681** | 120.4（min 2 / max 150） | **113.1 MiB** | 61.6 min（`--workers 8`；14 workers 应更快） |
 | PCOD-Inorg | **1,061,953** | **159,275,318** | 150.0（min 20 / max 150） | **1694.1 MiB** | **13.3 h**（旧实现 12.7 h；期间有外部任务抢占） |
 | TCOD-Inorg | **46,846** | **5,874,790** | 125.4（min 3 / max 150） | **68.0 MiB** | **15.2 min**（旧实现 16.9 min） |
-| TCOD-Full / COD-Full | 构建中/排队中 | — | — | — | 见 §1.1 与验收报告 |
+| TCOD-Full | **361,701** | **53,099,238** | 146.8（min 3 / max 150） | **594.3 MiB** | **12.1 h**（499.3 相/分钟，14 workers） |
+| COD-Full | 构建中/排队中 | — | — | — | 见 §1.1 与验收报告 |
 
 > 旧实现单进程约 1,590 相/分钟（COD 切片）；2026-10 的单次解析 + 自适应分块优化后整库吞吐约 +10–15%，
 > 详见 [`docs/构建与验收手册.md`](docs/构建与验收手册.md) §3.7。
@@ -242,7 +243,8 @@ python -m tools._verify_resume_equivalence                     # --resume 等价
 > COD 8 条坏相全部清除（7 恢复真峰、1 条无晶胞相剔除，相数 78,036→78,035，9,395,681 反射）；
 > PCOD 7 条坏相全部清除（159,275,318 反射，仅 17/1,061,953 条载荷变化）；
 > TCOD 无坏相且峰载荷逐字节不变。三库 `validate_xindb --all-chunks` 与 `accept_xindb` 均 **0 FAIL**。
-> `TCOD-Full` / `COD-Full` 正在按后续计划构建。
+> **TCOD-Full 已建成并验收**（361,701 相 / 53,099,238 反射，与 TCOD-Inorg 公共相逐字节相同）；
+> **COD-Full 正在构建**（535,166 源 CIF，预计 ~30 h）。
 > 更早的 `20261020` Release 库（旧 zip）在新版 `E5` 下仍会报 COD 8 / PCOD 7 条 FAIL。
 > 详见 [`docs/ACCEPTANCE-20261101-rebuild.md`](docs/ACCEPTANCE-20261101-rebuild.md)。
 
@@ -299,7 +301,7 @@ python -m tools._verify_resume_equivalence                     # --resume 等价
 | 半塌缩边界相（WARN） | COD 2,251 / PCOD 5,598（重建后）/ TCOD 1,670 条：最强线落在 d≈λ/2（2θ→180°），其余峰存在（强度和 ≥5/1000） | 真实反射 + LP 在 180° 发散导致的**峰口径边缘现象**，不是假峰，**重建也不会消除**；根治需改峰口径（`DEFAULT_DMIN` 抬到 0.78–0.79 Å 或剔除 2θ>179°，属 v4 决策）。当前仅 WARN，不阻塞发布 |
 | 退化晶胞 | 重建后 COD 库已无（`96-210-4629` 源 CIF 无晶胞 → 建库时剔除） | — |
 | 无空间群 | COD 库 126 条（重建前 127，`96-210-4629` 已剔除；`E3` 仅提示） | 不影响峰位；按空间群过滤时这类相会被排除 |
-| 全库发布 | `TCOD-Full` / `COD-Full` 构建中/排队中；`PCOD-Full` 与 `PCOD-Inorg` 等价（PCOD 全无机），不构建 | 建好后 XinMatch 会通过内置 `xindb_tcod_full` / `xindb_cod_full` 行自动发现 |
+| 全库发布 | **TCOD-Full 已建成并验收**（361,701 相 / 53,099,238 反射 / 594.3 MiB，validate 0F/2W、accept 0F/1W，与 TCOD-Inorg 公共相逐字节相同）；**COD-Full 构建中**（535,166 源 CIF）；`PCOD-Full` 与 `PCOD-Inorg` 等价（PCOD 全无机），不构建 | 建好后 XinMatch 会通过内置 `xindb_tcod_full` / `xindb_cod_full` 行自动发现；TCOD-Full 含 91 种元素，其中 48,732 相的元素超出 63 位 `elem_mask`（`element_inv` 仍完整） |
 | 全库发布 | **构建已支持** 6 库（`--source × --set`）；`20261020` release 只发布了 Inorg 三库 | 有机/全库检索需先构建 `*-Full` 库（耗时小时级，见构建手册 §3.6） |
 | PCOD 元素面窄 | 只有 19 种元素（O/Si/P/Al/V/S/B/F…） | GRINSP 预测集的客观构成，不是建库丢数据 |
 | `top_i` 为 float32 | 强度用 `<f4` 而非量化整数 | 体积换精度；norm-1000 下有效位足够 |
@@ -328,3 +330,4 @@ python -m tools._verify_resume_equivalence                     # --resume 等价
 | 2026-10-24 | **构库/验收工具重建**：统一六库构建入口（`--source × --set`，含 PCOD/TCOD Full）；新增 `build_pipeline.compute_phase()` 单次解析；新增 `accept_xindb.py` 通用验收与 `E5/E6` 坏相检查；建立 `tests/` 回归（合成 CIF，不依赖真实库）；新增 [`docs/构建与验收手册.md`](docs/构建与验收手册.md) 并记录「库在本仓库构建、CIF 源在 `sync-COD`」约定 |
 | 2026-11-01 | **用修复后的峰引擎重建三个 Inorg 库**（源快照仍 `20261020`）：COD 78,036→**78,035** 相 / 9,395,681 反射（8 条坏相清除）；TCOD 46,846 相、峰载荷与旧库逐字节相同；PCOD 1,061,953 相 / 159,275,318 反射（7 条坏相清除）；三库均 validate/accept **0 FAIL**。见 [`docs/ACCEPTANCE-20261101-rebuild.md`](docs/ACCEPTANCE-20261101-rebuild.md) |
 | 2026-11-02 | 开始构建 **TCOD-Full**（362,294 源 CIF）与 **COD-Full**（535,166 源 CIF）；`PCOD-Full` 因 PCOD 全为无机、与 `PCOD-Inorg` 等价而跳过 |
+| 2026-11-02 | **TCOD-Full 建成并验收**：361,701 相 / 53,099,238 反射 / 623,173,632 B / 12.1 h；validate 0F/2W、accept 0F/1W；与 TCOD-Inorg 公共相 46,846/46,846 逐字节相同；自重召回 10/10。COD-Full 构建中 |

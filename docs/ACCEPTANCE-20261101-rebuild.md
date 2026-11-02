@@ -30,6 +30,9 @@ $PY = D:\Project\XRD\python310\python.exe
 | **COD-Inorg** | 78,036 → **78,035** | 9,394,774 → **9,395,681** | 118,710,272 → **118,640,640** | `7C08B34D…D7C40E3` | 3,693 s（61.6 min） | **PASS**（validate 0F/1W，accept 0F/1W） |
 | **TCOD-Inorg** | 46,846 → **46,846** | 5,874,790 → **5,874,790** | 71,352,320 → **71,352,320** | `8F2A25D5…921C4DC` | 914 s（15.2 min） | **PASS**（validate 0F/1W，accept 0F/1W） |
 | **PCOD-Inorg** | 1,061,953 → **1,061,953** | 159,274,265 → **159,275,318** | 1,776,353,280 → **1,777,357,376** | `ABB7EC8C…A1B823` | 47,781 s（13.3 h） | **PASS**（validate 0F/1W，accept 0F/1W） |
+| **TCOD-Full**（新库） | — → **361,701** | — → **53,099,238** | 0 → **623,173,632**（594.3 MiB） | `36838FBE…C91238` | 43,469 s（12.1 h） | **PASS**（validate 0F/2W，accept 0F/1W） |
+| **COD-Full**（新库） | <!-- CODFULL-ENTRIES --> | <!-- CODFULL-PEAKS --> | <!-- CODFULL-BYTES --> | <!-- CODFULL-SHA --> | <!-- CODFULL-TIME --> | <!-- CODFULL-VERDICT --> |
+| **PCOD-Full** | 不构建（与 PCOD-Inorg 等价，见 §5.5） | — | — | — | — | — |
 
 - COD 相数 −1：唯一一条无可用晶胞的源 CIF `96-210-4629` 现在被正确判为「不可计算」并在建库时跳过
   （`skipped_no_peaks` 1,162 → 1,163）。
@@ -125,10 +128,10 @@ python -m tools.accept_xindb data/COD-Inorg-20261020.xinDB --manifest D:\Project
 
 ---
 
-## 4. 关于 2,251 / 5,607 / 1,670 条「半塌缩」WARN
+## 4. 关于 2,251 / 5,598 / 1,670 条「半塌缩」WARN
 
 `E5` 的 WARN 类指：某相**最强反射**恰落在 `d_min ≈ λ/2`（2θ→180°）窗口、但其余峰仍然存在
-（强度和 ≥5/1000）。新建 COD 库仍有 **2,251** 条这样的相（TCOD 1,670 条）。
+（强度和 ≥5/1000）。重建后 COD 库仍有 **2,251** 条（TCOD-Inorg 1,670；PCOD-Inorg 5,598；TCOD-Full 3,008）。
 
 - 这些**不是假峰**：它们是真实反射，只是 2θ 极接近 180°，Lorentz-polarisation 因子在该处发散
   （口径把 `d_min` 定在精确的 λ/2）。引擎修复（剔除 180° 反射、给 LP 三角因子取 floor）**不能也不应**
@@ -191,7 +194,43 @@ python -m tools.accept_xindb data/COD-Inorg-20261020.xinDB --manifest D:\Project
 
 ---
 
-## 6. 复现与产物
+## 6. TCOD-Full 验收明细（新库）
+
+### 6.1 构建
+
+| 指标 | 值 |
+|---|---|
+| 源 / 入库 | `sync-COD/TCOD`（362,293 个清单 CIF / 362,294 个原始 CIF）/ **361,701 相 / 53,099,238 反射 / 89 chunk**；`skipped_no_peaks=592`，`errors=0` |
+| 耗时 / 吞吐 | 43,469 s（**12.1 h**）/ **499.3 相/分钟**（`--workers 14`） |
+| 产物 | **623,173,632 B（594.3 MiB）**，`journal_mode=delete`，`integrity_check=ok` |
+| SHA-256 | `36838FBE1F18EDBF568DEDC86484FCD58138549258AE2978F658EC3589C91238` |
+
+### 6.2 验收
+
+| 工具 | 结果 |
+|---|---|
+| `validate_xindb --all-chunks`（89 块全解码，127 s） | **0 FAIL / 2 WARN / 29 项**：`C7` min=3 max=150 mean=146.8；WARN①=3,008 条半塌缩口径边缘相；WARN②=`E1` 1 条源晶胞角 `alpha=1°`（源数据异常，非建库错误） |
+| `accept_xindb`（全量载荷，147 s） | **0 FAIL / 1 WARN / 19 项**：`bad_phase_ids=0`、`boundary_phases=0`、`placeholder_phases=0`、`single_peak_phases=0`；id 范围 `[10000001, 40354755]`、元素 **91** 种；WARN 为 3,008 条半塌缩相 |
+| 与 `TCOD-Inorg` 公共相逐条目对比（`compare_full_inorg.py TCOD`） | **46,846 / 46,846 条 `(d,i)` 逐字节相同，0 条差异、0 条缺失** —— Full 只"加相"，没有改动 Inorg 已覆盖相的任何物理量 |
+| 自重召回 10 相 | **Top-1 10/10、Top-5 10/10**，中位 3.46 s（测量时 COD-Full 正在构建，机器满负载；空闲时更快） |
+
+### 6.3 已知提示（不阻塞）
+
+- 构建日志提示 **48,732 条相的某个元素在 `entries.elem_mask`（63 位）里没有位可放**：
+  TCOD-Full 含 91 种元素，超出 63 位掩码容量。这些相的元素列表仍完整保存在 `entries.elements`
+  与 `element_inv` 中，按元素检索不受影响；只有「用 63 位掩码做快速预剪枝」的场景会退化。
+  若要让掩码覆盖全部元素，需要扩宽 `elem_mask`（schema v4 决策）。
+- `E1` 的 `alpha=1°` 是一条源 CIF 的异常晶胞值（原样入库），不影响峰位/检索。
+
+---
+
+## 7. COD-Full
+
+<!-- CODFULL-SECTION -->
+
+---
+
+## 8. 复现与产物
 
 | 文件 | 说明 |
 |---|---|
