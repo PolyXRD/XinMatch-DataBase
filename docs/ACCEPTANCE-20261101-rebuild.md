@@ -31,7 +31,7 @@ $PY = D:\Project\XRD\python310\python.exe
 | **TCOD-Inorg** | 46,846 → **46,846** | 5,874,790 → **5,874,790** | 71,352,320 → **71,352,320** | `8F2A25D5…921C4DC` | 914 s（15.2 min） | **PASS**（validate 0F/1W，accept 0F/1W） |
 | **PCOD-Inorg** | 1,061,953 → **1,061,953** | 159,274,265 → **159,275,318** | 1,776,353,280 → **1,777,357,376** | `ABB7EC8C…A1B823` | 47,781 s（13.3 h） | **PASS**（validate 0F/1W，accept 0F/1W） |
 | **TCOD-Full**（新库） | — → **361,701** | — → **53,099,238** | 0 → **623,173,632**（594.3 MiB） | `36838FBE…C91238` | 43,469 s（12.1 h） | **PASS**（validate 0F/2W，accept 0F/1W） |
-| **COD-Full**（新库） | <!-- CODFULL-ENTRIES --> | <!-- CODFULL-PEAKS --> | <!-- CODFULL-BYTES --> | <!-- CODFULL-SHA --> | <!-- CODFULL-TIME --> | <!-- CODFULL-VERDICT --> |
+| **COD-Full**（新库） | — → **532,038** | — → **77,458,154** | 0 → **922,120,192**（879.4 MiB） | `E217F28F…F820443` | 130,993 s（36.4 h） | **PASS**（validate 0F/2W，accept 0F/2W） |
 | **PCOD-Full** | 不构建（与 PCOD-Inorg 等价，见 §5.5） | — | — | — | — | — |
 
 - COD 相数 −1：唯一一条无可用晶胞的源 CIF `96-210-4629` 现在被正确判为「不可计算」并在建库时跳过
@@ -224,9 +224,33 @@ python -m tools.accept_xindb data/COD-Inorg-20261020.xinDB --manifest D:\Project
 
 ---
 
-## 7. COD-Full
+## 7. COD-Full 验收明细（新库）
 
-<!-- CODFULL-SECTION -->
+### 7.1 构建
+
+| 指标 | 值 |
+|---|---|
+| 源 / 入库 | `sync-COD/COD`（535,166 个清单 CIF）/ **532,038 相 / 77,458,154 反射 / 130 chunk**；`skipped_no_peaks=3,128`，`errors=0` |
+| 耗时 / 吞吐 | 130,993 s（**36.4 h**）/ **243.7 相/分钟**（`--workers 14`；COD 全库含大量有机大晶胞，慢相占主导） |
+| 产物 | **922,120,192 B（879.4 MiB）**，`journal_mode=delete`，`integrity_check=ok` |
+| SHA-256 | `E217F28FA03755A177DA6BC932D8C1294C267876DEAAA5E2DE6BCA7D6F820443` |
+
+### 7.2 验收
+
+| 工具 | 结果 |
+|---|---|
+| 结构扫描（`accept_full.py COD`） | `n_peaks<=1` 仅 **2** 条（均为普通单峰相：`96-200-1543` d=12.151、`96-200-2110` d=11.228，非边界假峰）；边界塌缩 **0**；`integrity_check=ok` |
+| `validate_xindb --all-chunks`（130 块全解码，53 s） | **0 FAIL / 2 WARN / 30 项**：`C7` min=1 max=150 mean=145.6；WARN①=2 条普通单峰相（E5 仅提示）+ 2,368 条半塌缩边缘相；`E3` 135 条无空间群（提示） |
+| `accept_xindb`（全量载荷，56 s） | **0 FAIL / 2 WARN / 20 项**：`bad_phase_ids=0`、`boundary_phases=0`、`placeholder_phases=0`、`normal_single_peak_phases=2`；id 范围 `[1000000, 9017926]`、元素 **96** 种、130 块全查 |
+| 与 `COD-Inorg` 公共相逐条目对比（`compare_full_inorg.py COD`） | **78,035 / 78,035 条 `(d,i)` 逐字节相同，0 差异、0 缺失** —— Full 只"加相"，未改动 Inorg 已覆盖相 |
+| 自重召回 10 相 | **Top-1 10/10、Top-5 10/10**，中位 1.03 s（53 万相全库） |
+
+### 7.3 已知提示（不阻塞）
+
+- 构建日志提示 **81,284 条相的元素超出 63 位 `elem_mask`**（COD-Full 共 96 种元素）；
+  元素列表完整保存在 `entries.elements` / `element_inv`，按元素检索不受影响；仅 63 位掩码快速剪枝场景退化（schema v4 可扩宽）。
+- `E3` 135 条无空间群（磁结构/超空间群源数据），只影响按空间群过滤，不影响峰位。
+- 全库 `n_peaks<=1` 的 2 条相是**普通单峰相**（唯一反射在 d≈11–12 Å），不是 180° 边界/占位晶胞假峰。
 
 ---
 
