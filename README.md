@@ -62,7 +62,8 @@ python -m tools.validate_xindb COD-Inorg-20261020.xinDB   # 可选：自检 25 �
 
 2026-10 修复了两类「假峰相」：2θ=180° 边界（`d=λ/2`）反射被浮点舍入放进峰表 + LP 发散导致整谱塌缩；
 gemmi 读不到晶胞时用默认占位晶胞算出 `d=1.0` 假峰。用修复后的引擎重建三个 Inorg 库，
-**源快照仍为 `20261020`**（`meta.data_date` 不变），旧库已移到 `data/_prev/` 以便对比：
+**源快照仍为 `20261020`**（`meta.data_date` 不变）。重建前的旧库曾放在 `data/_prev/` 做逐条目对比，
+**验收完成后已于 2026-11-04 删除**（对比结果保留在验收报告中）：
 
 | 库 | 相数 | 反射数 | 体积（字节） | SHA-256（前 16） | 验收 |
 |---|---|---|---|---|---|
@@ -77,7 +78,7 @@ gemmi 读不到晶胞时用默认占位晶胞算出 `d=1.0` 假峰。用修复�
 
 - 验收细节、坏相逐条清单与前后对比见 [`docs/ACCEPTANCE-20261101-rebuild.md`](docs/ACCEPTANCE-20261101-rebuild.md)。
 - **Release 已发布**：[`20261020-rebuild`](https://github.com/PolyXRD/XinMatch-DataBase/releases/tag/20261020-rebuild)（2026-11-04）含 5 个库的 zip + `SHA256SUMS.txt`；发布说明 [`docs/release-notes-20261104.md`](docs/release-notes-20261104.md)。打包命令：`python -m tools.package_release --out _release\<date>`（手册 §5）。
-- `data/_prev/` 里的旧库仅用于前后对比；确认无需回滚后可删除（COD 113 MB + TCOD 68 MB + PCOD 1.7 GB）。
+- 重建前的 `data/_prev/` 旧库（COD 113 MB + TCOD 68 MB + PCOD 1.7 GB）**已于 2026-11-04 删除**；旧 `20261020` Release（含三个含坏相的 Inorg zip）也已删除，仅保留本重建版 Release。
 
 ---
 
@@ -244,7 +245,8 @@ python -m tools._verify_resume_equivalence                     # --resume 等价
 > TCOD 无坏相且峰载荷逐字节不变。三库 `validate_xindb --all-chunks` 与 `accept_xindb` 均 **0 FAIL**。
 > **TCOD-Full 与 COD-Full 均已建成并验收**：TCOD-Full 361,701 相 / 53,099,238 反射；
 > COD-Full 532,038 相 / 77,458,154 反射（36.4 h）；两者与对应 Inorg 库的公共相**逐字节相同**。
-> 更早的 `20261020` Release 库（旧 zip）在新版 `E5` 下仍会报 COD 8 / PCOD 7 条 FAIL。
+> 更早的 `20261020` Release（COD 8 / PCOD 7 条坏相）**已于 2026-11-04 删除**，仅保留重建版 `20261020-rebuild`。
+> 若手头仍有旧的 Inorg zip，请勿使用，改用重建版。
 > 详见 [`docs/ACCEPTANCE-20261101-rebuild.md`](docs/ACCEPTANCE-20261101-rebuild.md)。
 
 ---
@@ -254,7 +256,7 @@ python -m tools._verify_resume_equivalence                     # --resume 等价
 ```
 .
 ├── _atomic_scattering_params.json Cromer-Mann 系数（fastxrd 按 tools/../ 找它）
-├── data/                          **本地产物目录**（不入仓）：重建后的 Inorg 三库 + `_prev/` 旧库 + 构建日志
+├── data/                          **本地产物目录**（不入仓）：重建后 5 库（3 Inorg + 2 Full）+ 构建日志
 ├── pytest.ini  tests/             工具链回归测试（合成 CIF/归档，不依赖 1.8 GiB 真实库）
 ├── tmp/                           本地试产/bench/验收 JSON（不入仓，.gitignore）
 ├── xinmatch/                      **构库子集**（完整程序见 PolyXRD/XinMatch）
@@ -287,8 +289,8 @@ python -m tools._verify_resume_equivalence                     # --resume 等价
 （完整版会 `import scipy` 等，构库不需要）。其余检索/精修/GUI 模块见完整版仓库。
 
 不入仓（`.gitignore`）：`data/ *.xinDB *.db *.sqlite tmp/ _release/ __pycache__/`。
-本机 `data/` 当前放着重后的 Inorg 库（COD 113.1 MB / TCOD 68.0 MB / PCOD 重建中）、
-`data/_prev/`（重建前旧库，供对比/回滚）与 `data/_build-20261101-*.log`。
+本机 `data/` 当前放着重建后的 5 个库（COD-Inorg 113.1 MB / TCOD-Inorg 68.0 MB / PCOD-Inorg 1694.1 MB /
+TCOD-Full 594.3 MB / COD-Full 879.4 MB）与 `data/_build-*.log`；`data/_prev/` 旧库已于 2026-11-04 删除。
 
 ---
 
@@ -296,7 +298,7 @@ python -m tools._verify_resume_equivalence                     # --resume 等价
 
 | 项 | 现状 | 影响 |
 |---|---|---|
-| **重建前旧库的坏相** | 旧 `20261020` Release：COD 8 条、PCOD 7 条、TCOD 0 条 | 用旧峰引擎构建；**2026-11-01/02 重建后三个 Inorg 库均已 0 条**。旧 zip 如需对外使用，请替换为重建版 |
+| **重建前旧库的坏相** | 旧 `20261020` Release：COD 8 条、PCOD 7 条、TCOD 0 条 | 用旧峰引擎构建；**2026-11-01/02 重建后三个 Inorg 库均已 0 条**。旧 Release 及其 Inorg zip 已于 2026-11-04 删除，仅保留重建版 |
 | 半塌缩边界相（WARN） | COD 2,251 / PCOD 5,598（重建后）/ TCOD 1,670 条：最强线落在 d≈λ/2（2θ→180°），其余峰存在（强度和 ≥5/1000） | 真实反射 + LP 在 180° 发散导致的**峰口径边缘现象**，不是假峰，**重建也不会消除**；根治需改峰口径（`DEFAULT_DMIN` 抬到 0.78–0.79 Å 或剔除 2θ>179°，属 v4 决策）。当前仅 WARN，不阻塞发布 |
 | 退化晶胞 | 重建后 COD 库已无（`96-210-4629` 源 CIF 无晶胞 → 建库时剔除） | — |
 | 无空间群 | COD 库 126 条（重建前 127，`96-210-4629` 已剔除；`E3` 仅提示） | 不影响峰位；按空间群过滤时这类相会被排除 |

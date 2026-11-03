@@ -8,7 +8,8 @@
 >
 > 约定：数据库在本仓库构建，产物写 `data/`；CIF 源为上级 `sync-COD` 的
 > `inorg_cif/<LIB>`（`XRD_DATA_ROOT` 可覆盖）；源快照仍为 **`20261020`**（`meta.data_date` 不变）。
-> 旧库在重建前已移到 `data/_prev/`，用于逐条目对比；Release 附件（zip）本轮未重打。
+> 旧库在重建前已移到 `data/_prev/`，用于逐条目对比；**对比完成后旧库与旧 `20261020` Release 已于 2026-11-04 删除**；
+> 重建版已发布为 GitHub Release [`20261020-rebuild`](https://github.com/PolyXRD/XinMatch-DataBase/releases/tag/20261020-rebuild)。
 
 **构建环境**：Python 3.10.11 / numpy 2.2.6 / gemmi 0.7.5；构建器 commit `80a7c25`（六库统一入口 + 单次解析 + 自适应结构因子分块）。
 **构建命令**（每库单独执行，`XINMATCH_XINDB_DIR` 已清空以确保写本仓库 `data/`）：
@@ -259,7 +260,7 @@ python -m tools.accept_xindb data/COD-Inorg-20261020.xinDB --manifest D:\Project
 | 文件 | 说明 |
 |---|---|
 | `data/{COD,TCOD,PCOD}-Inorg-20261020.xinDB` | 重建产物 |
-| `data/_prev/*.xinDB` | 重建前旧库（用于逐条目对比；确认后可删除，PCOD 旧库 1.7 GB） |
+| `data/_prev/*.xinDB` | 重建前旧库（用于逐条目对比；**已于 2026-11-04 删除**，对比结果见本报告） |
 | `data/_build-20261101-{COD,TCOD,PCOD}.log` | 构建日志（进度行、吞吐、构建 summary） |
 | `tmp/rebuild-20261101/inspect_rebuild.py` | 单库身份 + 坏相 + 全库边界扫描 |
 | `tmp/rebuild-20261101/compare_entries.py` | 旧/新逐条目 `(d,i)` 字节对比 |
