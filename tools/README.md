@@ -81,6 +81,16 @@ python -m tools.accept_xindb data/COD-Inorg-20261020.xinDB \
 python -m tools._verify_resume_equivalence          # 默认合成数据，秒级
 ```
 
+## ⑤ 发布打包
+
+| 脚本 | 作用 |
+|---|---|
+| `package_release.py` | 把 `data/*.xinDB`（或指定文件名）打成 zip（Deflate level 1，~1.2×）并生成 `SHA256SUMS.txt`；配 `gh release create` 使用，步骤见构建手册 §5 |
+
+```bash
+python -m tools.package_release --out _release/20261104
+```
+
 ## 测试
 
 ```bash

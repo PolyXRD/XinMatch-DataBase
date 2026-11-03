@@ -76,8 +76,7 @@ gemmi 读不到晶胞时用默认占位晶胞算出 `d=1.0` 假峰。用修复�
 > 与 `PCOD-Inorg` 实质等价（原始归档仅差 2 个未入库 CIF），按决定跳过。
 
 - 验收细节、坏相逐条清单与前后对比见 [`docs/ACCEPTANCE-20261101-rebuild.md`](docs/ACCEPTANCE-20261101-rebuild.md)。
-- **Release 附件（三个 zip）本轮未重打**：`20261020` Release 里仍是 2026-10 的旧库；
-  需要对外发布修复版时，按构建手册 §5 重新打 zip 并更新 `SHA256SUMS.txt`。
+- **Release 已发布**：[`20261020-rebuild`](https://github.com/PolyXRD/XinMatch-DataBase/releases/tag/20261020-rebuild)（2026-11-04）含 5 个库的 zip + `SHA256SUMS.txt`；发布说明 [`docs/release-notes-20261104.md`](docs/release-notes-20261104.md)。打包命令：`python -m tools.package_release --out _release\<date>`（手册 §5）。
 - `data/_prev/` 里的旧库仅用于前后对比；确认无需回滚后可删除（COD 113 MB + TCOD 68 MB + PCOD 1.7 GB）。
 
 ---
