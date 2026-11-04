@@ -72,9 +72,13 @@ gemmi 读不到晶胞时用默认占位晶胞算出 `d=1.0` 假峰。用修复�
 | **PCOD-Inorg**（重建） | **1,061,953** | **159,275,318** | **1,777,357,376**（1694.1 MiB） | `ABB7EC8C1E68CD6F…` | validate 0F/1W（29 项）；accept 0F/1W；7 条坏相修复；17/1,061,953 条载荷变化 |
 | **TCOD-Full**（新库） | **361,701** | **53,099,238** | **623,173,632**（594.3 MiB） | `36838FBE1F18EDBF…` | validate 0F/2W（29 项）；accept 0F/1W；与 TCOD-Inorg 公共相 46,846/46,846 逐字节相同；自重召回 10/10 |
 | **COD-Full**（新库） | **532,038** | **77,458,154** | **922,120,192**（879.4 MiB） | `E217F28FA03755A1…` | validate 0F/2W（30 项）；accept 0F/2W（20 项）；与 COD-Inorg 公共相 78,035/78,035 逐字节相同；自重召回 10/10 |
+| **MP**（外部库） | **155,201** | **20,900,193** | **251,633,664**（240.0 MiB） | `26D7A9BED83A57C0…` | validate 0F/1W（29 项）；accept 0F/1W（19 项）；id 集合与归档 155,201 个 `mp-id` 完全相等；自重召回 Top-1/Top-5 20/20 |
 
 > **PCOD-Full 不构建**：PCOD 归档 1,061,962 条 CIF **全部为无机**（manifest `is_inorg=1` 100%），
 > 与 `PCOD-Inorg` 实质等价（原始归档仅差 2 个未入库 CIF），按决定跳过。
+
+- **MP 外部库**：`data/MP-20261031.xinDB`（Materials Project，155,201 相，id 为原生 `mp-<n>`，
+  `tier=2` 计算结构）；XinMatch 通过「添加外部库」挂载。构建/验收见 [`docs/MP-库构建与验收.md`](docs/MP-库构建与验收.md)。
 
 - 验收细节、坏相逐条清单与前后对比见 [`docs/ACCEPTANCE-20261101-rebuild.md`](docs/ACCEPTANCE-20261101-rebuild.md)。
 - **Release 已发布**：[`20261020-rebuild`](https://github.com/PolyXRD/XinMatch-DataBase/releases/tag/20261020-rebuild)（2026-11-04）含 5 个库的 zip + `SHA256SUMS.txt`；发布说明 [`docs/release-notes-20261104.md`](docs/release-notes-20261104.md)。打包命令：`python -m tools.package_release --out _release\<date>`（手册 §5）。
@@ -211,6 +215,7 @@ python -m tools.build_cod_xindb --source TCOD --set full --data-date 20261020 --
 | TCOD-Inorg | **46,846** | **5,874,790** | 125.4（min 3 / max 150） | **68.0 MiB** | **15.2 min**（旧实现 16.9 min） |
 | TCOD-Full | **361,701** | **53,099,238** | 146.8（min 3 / max 150） | **594.3 MiB** | **12.1 h**（499.3 相/分钟，14 workers） |
 | COD-Full | **532,038** | **77,458,154** | 145.6（min 1 / max 150） | **879.4 MiB** | **36.4 h**（243.7 相/分钟，14 workers） |
+| MP（外部库） | **155,201** | **20,900,193** | 134.7（min 8 / max 150） | **240.0 MiB** | **9.0 min**（17,318 相/分钟，14 workers） |
 
 > 旧实现单进程约 1,590 相/分钟（COD 切片）；2026-10 的单次解析 + 自适应分块优化后整库吞吐约 +10–15%，
 > 详见 [`docs/构建与验收手册.md`](docs/构建与验收手册.md) §3.7。
@@ -333,3 +338,4 @@ TCOD-Full 594.3 MB / COD-Full 879.4 MB）与 `data/_build-*.log`；`data/_prev/`
 | 2026-11-02 | 开始构建 **TCOD-Full**（362,294 源 CIF）与 **COD-Full**（535,166 源 CIF）；`PCOD-Full` 因 PCOD 全为无机、与 `PCOD-Inorg` 等价而跳过 |
 | 2026-11-02 | **TCOD-Full 建成并验收**：361,701 相 / 53,099,238 反射 / 623,173,632 B / 12.1 h；validate 0F/2W、accept 0F/1W；与 TCOD-Inorg 公共相 46,846/46,846 逐字节相同；自重召回 10/10。COD-Full 构建中 |
 | 2026-11-04 | **COD-Full 建成并验收**：532,038 相 / 77,458,154 反射 / 922,120,192 B / **36.4 h**；validate 0F/2W、accept 0F/2W（`bad_phase_ids=0`）；与 COD-Inorg 公共相 78,035/78,035 逐字节相同；自重召回 10/10。5 库（3 Inorg + 2 Full）全部完成，PCOD-Full 等价跳过 |
+| 2026-11-04 | **MP-20261031 外部库建成并验收**（Materials Project，155,204 CIF）：155,201 相 / 20,900,193 反射 / 251,633,664 B / 9.0 min；`mp-<n>` id，validate 0F/1W、accept 0F/1W（id 集合与归档完全一致）；自重召回 20/20。见 [`docs/MP-库构建与验收.md`](docs/MP-库构建与验收.md) |

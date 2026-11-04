@@ -105,11 +105,15 @@ import numpy as np
 #: Shared source root, same convention as the build tools (``XRD_DATA_ROOT``).
 DEFAULT_DATA_ROOT = Path(os.environ.get("XRD_DATA_ROOT") or r"D:\Project\XRD\sync-COD")
 
-#: The 3COD convention: source -> (stored-id offset, full-archive sub-directory).
+#: Materials Project CIF root (``MP_CIF_ROOT`` overrides it).
+DEFAULT_MP_ROOT = Path(os.environ.get("MP_CIF_ROOT") or r"D:\Project\MP-summary\cif")
+
+#: Source id offsets.  ``MP`` uses native ``mp-<n>`` ids (no offset).
 SOURCES: dict[str, tuple[int, str]] = {
     "COD": (0, "COD"),
     "PCOD": (20_000_000, "PCOD"),
     "TCOD": (100_000_000, "TCOD"),
+    "MP": (0, ""),
 }
 
 #: The stored-id band each source owns.  A COD phase that lands in the PCOD
@@ -118,6 +122,7 @@ BANDS: dict[str, tuple[int, int]] = {
     "COD": (0, 20_000_000),
     "PCOD": (20_000_000, 100_000_000),
     "TCOD": (100_000_000, 200_000_000),
+    "MP": (0, 20_000_000),
 }
 
 #: Intensity scale the ``norm-1000`` convention promises (fallback when the
@@ -276,6 +281,16 @@ def _entry_number(entry_id: object) -> int | None:
     return int(digits)
 
 
+def _entry_number_for(entry_id: object, kind: str) -> int | None:
+    """Numeric id of an MP (``mp-<n>``) or COD-family (``96-...``) entry."""
+    if kind == "MP":
+        text = str(entry_id or "")
+        if text.startswith("mp-") and text[3:].isascii() and text[3:].isdigit():
+            return int(text[3:])
+        return None
+    return _entry_number(entry_id)
+
+
 def _display_id(stored: int) -> str:
     """Canonical display id of a *stored* (offset-applied) numeric id.
 
@@ -327,11 +342,11 @@ def _norm_scale_from_meta(meta: dict[str, str]) -> float:
 # Derivation of kind / dataset / source root
 # ---------------------------------------------------------------------------
 def _derive_kind(db: Path, meta: dict[str, str], explicit: str) -> str | None:
-    """Source archive (``COD``/``PCOD``/``TCOD``) of the library."""
+    """Source archive (``COD``/``PCOD``/``TCOD``/``MP``) of the library."""
     if explicit and explicit != "auto":
         return explicit.upper()
     for text in (meta.get("library_kind", ""), db.stem):
-        match = re.match(r"(PCOD|TCOD|COD)(?:-|$)", str(text), re.IGNORECASE)
+        match = re.match(r"(MP|PCOD|TCOD|COD)(?:-|$)", str(text), re.IGNORECASE)
         if match:
             return match.group(1).upper()
     return None
@@ -342,7 +357,7 @@ def _derive_dataset(meta: dict[str, str]) -> str:
     library_kind = str(meta.get("library_kind", ""))
     if library_kind.endswith("-Inorg"):
         return "inorg"
-    if library_kind.endswith("-Full"):
+    if library_kind.endswith("-Full") or library_kind.upper() == "MP":
         return "full"
     source = str(meta.get("cif_source", "")).replace("\\", "/").lower()
     if "inorg_cif" in source:
@@ -500,11 +515,14 @@ def _check_id_band(
     raw_min: int | None = None
     raw_max: int | None = None
     for (entry_id,) in conn.execute("SELECT entry_id FROM entries ORDER BY rowid"):
-        stored = _entry_number(entry_id)
+        stored = _entry_number_for(entry_id, kind)
         problem: str | None = None
         if stored is None:
-            problem = f"{entry_id!r} is not a 96-XXX-XXXX id"
-        elif _display_id(stored) != str(entry_id):
+            expected = "mp-<number>" if kind == "MP" else "96-XXX-XXXX"
+            problem = f"{entry_id!r} is not a {expected} id"
+        elif kind == "MP" and str(entry_id) != f"mp-{stored}":
+            problem = f"{entry_id!r} is not the canonical display form of mp-{stored}"
+        elif kind != "MP" and _display_id(stored) != str(entry_id):
             problem = f"{entry_id!r} is not the canonical display form of {stored:,}"
         elif not band_lo <= stored < band_hi:
             problem = (
@@ -552,6 +570,79 @@ def _open_manifest(rep: Report, manifest: Path | None) -> sqlite3.Connection | N
     return conn
 
 
+def _check_mp_ownership(
+    conn: sqlite3.Connection,
+    rep: Report,
+    source_root: Path | None,
+    entries_n: int,
+) -> None:
+    """``A1`` for MP: the entry-id set must equal the archive's mp-id set.
+
+    The MP archive is formula-named, so there is no ``id -> path`` layout to
+    stat.  Instead the tool re-scans the archive headers (165k small reads) and
+    compares the *sets* exactly -- stronger than the sampled check used for the
+    COD family.
+    """
+    if source_root is None:
+        rep.warn(
+            "A1.ownership",
+            "cannot verify MP ids: no archive root (set MP_CIF_ROOT, pass --mp-root, "
+            "or keep meta.cif_source alive)",
+        )
+        return
+    try:
+        from xinmatch.core.db.mp_scan import scan_mp_archive
+    except ImportError as exc:  # pragma: no cover - repo checkout always has it
+        rep.warn("A1.ownership", f"cannot import the MP scanner: {exc}")
+        return
+    try:
+        archive = scan_mp_archive(source_root)
+    except Exception as exc:
+        rep.warn("A1.ownership", f"cannot scan MP archive {source_root}: {exc}")
+        return
+
+    archive_ids = {mp_id for mp_id, _path in archive.entries}
+    db_ids: set[int] = set()
+    bad: list[str] = []
+    for (entry_id,) in conn.execute("SELECT entry_id FROM entries ORDER BY rowid"):
+        stored = _entry_number_for(entry_id, "MP")
+        if stored is None:
+            bad.append(str(entry_id))
+        else:
+            db_ids.add(stored)
+    missing = archive_ids - db_ids
+    extra = db_ids - archive_ids
+    rep.stats["mp_archive_ids"] = len(archive_ids)
+    rep.stats["mp_db_ids"] = len(db_ids)
+    rep.stats["mp_missing"] = len(missing)
+    rep.stats["mp_extra"] = len(extra)
+    rep.stats["mp_no_id"] = len(archive.no_id)
+
+    duplicate_n = entries_n - len(db_ids) - len(bad) if entries_n else 0
+    if bad or missing or extra or duplicate_n:
+        parts = []
+        if bad:
+            parts.append(f"{len(bad)} unparseable ids (e.g. {bad[:3]})")
+        if missing:
+            sample = sorted(missing)[:5]
+            parts.append(f"{len(missing)} archive ids missing (e.g. {sample})")
+        if extra:
+            sample = sorted(extra)[:5]
+            parts.append(f"{len(extra)} ids absent from the archive (e.g. {sample})")
+        if duplicate_n:
+            parts.append(f"{duplicate_n} duplicate ids")
+        rep.fail(
+            "A1.ownership",
+            f"MP id set does not match {source_root}: " + "; ".join(parts),
+        )
+    else:
+        rep.ok(
+            "A1.ownership",
+            f"{len(db_ids):,} mp ids match the archive exactly "
+            f"({archive.total:,} CIF; {len(archive.no_id)} without an mp-id header skipped)",
+        )
+
+
 def _check_archive_ownership(
     conn: sqlite3.Connection,
     rep: Report,
@@ -568,6 +659,9 @@ def _check_archive_ownership(
     """``A1``: sampled ids must resolve to real CIFs (or manifest rows)."""
     if entries_n == 0:
         rep.fail("A1.ownership", "library holds no entries")
+        return
+    if kind == "MP":
+        _check_mp_ownership(conn, rep, source_root, entries_n)
         return
     if source_root is None and manifest_conn is None:
         rep.warn(
@@ -1136,6 +1230,7 @@ def accept(
     manifest: Path | None = None,
     *,
     data_root: Path | None = None,
+    mp_root: Path | None = None,
     sample_ids: int = 40,
     sample_elements: int = 20,
     sample_chunks: int | None = None,
@@ -1170,16 +1265,30 @@ def accept(
             rep.fail(
                 "M0.kind",
                 "cannot derive the source archive from meta.library_kind / file name; "
-                "pass --kind COD|PCOD|TCOD",
+                "pass --kind COD|PCOD|TCOD|MP",
             )
             return rep
         rep.kind = derived_kind
         dataset = _derive_dataset(meta)
         rep.dataset = dataset
-        offset = SOURCES[rep.kind][0]
-        root, origin = _source_root(
-            meta, rep.kind, dataset, data_root if data_root is not None else DEFAULT_DATA_ROOT
-        )
+        if rep.kind == "MP":
+            offset = 0
+            root = None
+            origin = "not found"
+            candidates = [
+                (mp_root, "--mp-root" if mp_root is not None else ""),
+                (Path(meta.get("cif_source", "")) if meta.get("cif_source") else None, "meta.cif_source"),
+                (DEFAULT_MP_ROOT, "DEFAULT_MP_ROOT"),
+            ]
+            for candidate, candidate_origin in candidates:
+                if candidate is not None and candidate.is_dir():
+                    root, origin = candidate, candidate_origin
+                    break
+        else:
+            offset = SOURCES[rep.kind][0]
+            root, origin = _source_root(
+                meta, rep.kind, dataset, data_root if data_root is not None else DEFAULT_DATA_ROOT
+            )
         rep.stats["dataset"] = dataset
         rep.stats["id_offset"] = offset
         rep.stats["source_root"] = str(root) if root else None
@@ -1232,7 +1341,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("db", type=Path, help=".xinDB file to accept (opened read-only)")
     parser.add_argument(
         "--kind",
-        choices=["auto", "COD", "PCOD", "TCOD"],
+        choices=["auto", "COD", "PCOD", "TCOD", "MP"],
         default="auto",
         help="source archive; auto reads meta.library_kind / the file name",
     )
@@ -1262,6 +1371,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--seed", type=int, default=0, help="sampling seed")
     parser.add_argument("--data-root", type=Path, default=None, help="CIF archive root override")
+    parser.add_argument(
+        "--mp-root",
+        type=Path,
+        default=None,
+        help="Materials Project CIF directory (default: meta.cif_source / $MP_CIF_ROOT)",
+    )
     parser.add_argument("--json", type=Path, default=None, help="write the report as JSON here")
     args = parser.parse_args(argv)
 
@@ -1270,6 +1385,7 @@ def main(argv: list[str] | None = None) -> int:
         kind=args.kind,
         manifest=args.manifest,
         data_root=args.data_root,
+        mp_root=args.mp_root,
         sample_ids=args.sample_ids,
         sample_elements=args.sample_elements,
         sample_chunks=args.sample_chunks,

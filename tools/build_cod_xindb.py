@@ -214,10 +214,23 @@ def _compute_one(task: tuple[str, int]) -> tuple[int, PhaseMeta | None, object, 
     parent process because a database handle cannot be shared.
     """
     from xinmatch.core.db.build_pipeline import compute_phase
-    from xinmatch.core.db.cif_scan import entry_id_for_cod
 
-    cif_path_str, cod_id = task
-    entry_id = entry_id_for_cod(int(cod_id) + _ID_OFFSET[0])
+    cif_path_str, archive_id = task
+    if _ID_MODE[0] == "mp":
+        from xinmatch.core.db.mp_scan import (
+            MP_AUTHOR,
+            MP_JOURNAL,
+            MP_QUALITY,
+            crystal_system_from_symbol,
+            entry_id_for_mp,
+            parse_mp_header,
+        )
+
+        entry_id = entry_id_for_mp(int(archive_id))
+    else:
+        from xinmatch.core.db.cif_scan import entry_id_for_cod
+
+        entry_id = entry_id_for_cod(int(archive_id) + _ID_OFFSET[0])
     meta, peaks, reason = compute_phase(
         Path(cif_path_str),
         entry_id=entry_id,
@@ -226,8 +239,24 @@ def _compute_one(task: tuple[str, int]) -> tuple[int, PhaseMeta | None, object, 
         normalize=True,
     )
     if reason or meta is None or peaks is None:
-        return cod_id, None, None, None, reason or "no_meta"
-    return cod_id, meta, peaks[0], peaks[1], ""
+        return archive_id, None, None, None, reason or "no_meta"
+    if _ID_MODE[0] == "mp":
+        # MP CIFs are pymatgen P1 expansions: the *real* space group lives in
+        # the leading comment, while `_symmetry_space_group_name_H-M` is always
+        # "P 1".  Prefer the comment so space-group filtering stays useful.
+        header = parse_mp_header(cif_path_str)
+        if header is not None:
+            if header.space_group:
+                meta.space_group = header.space_group
+                system = crystal_system_from_symbol(header.space_group)
+                if system:
+                    meta.crystal_system = system
+            meta.journal = MP_JOURNAL
+            meta.author = MP_AUTHOR
+            meta.quality = MP_QUALITY
+            if header.summary_date:
+                meta.year = int(header.summary_date[:4])
+    return archive_id, meta, peaks[0], peaks[1], ""
 
 
 #: Worker-process globals: the parameter values `_compute_one` needs.  Set by
@@ -239,13 +268,19 @@ _MAX_PEAKS: list[int] = [DEFAULT_MAX_PEAKS]
 #: 3COD convention).  Without it PCOD ``1000000`` and COD ``1000000`` would
 #: share the entry id ``96-100-0000`` and one library would shadow the other.
 _ID_OFFSET: list[int] = [0]
+#: ``"cod"`` (96-XXX-XXXX ids) or ``"mp"`` (mp-<number> ids); selected by the
+#: build tool and kept in a worker global like the other parameters.
+_ID_MODE: list[str] = ["cod"]
 
 
-def _init_worker(dmin: float, max_peaks: int, id_offset: int = 0) -> None:
+def _init_worker(
+    dmin: float, max_peaks: int, id_offset: int = 0, id_mode: str = "cod"
+) -> None:
     """Populate the worker-process globals (one call per child)."""
     _DMIN[0] = dmin
     _MAX_PEAKS[0] = max_peaks
     _ID_OFFSET[0] = int(id_offset)
+    _ID_MODE[0] = str(id_mode)
 
 
 def build(
@@ -265,6 +300,8 @@ def build(
     workers: int = 1,
     progress_cb=None,
     id_offset: int = 0,
+    id_mode: str = "cod",
+    extra_meta: dict[str, object] | None = None,
 ) -> BuildStats:
     """Build a v3 library from the CIF archive at *cif_root*.
 
@@ -311,6 +348,7 @@ def build(
         build_tool=build_tool,
         data_date=data_date,
         resume=bool(resume),
+        extra_meta=extra_meta,
     )
 
     # ``--resume`` continues an interrupted build instead of restarting it.
@@ -328,10 +366,10 @@ def build(
         if writer.resumed_from:
             first_redo = writer.resume_from_entry_id
             if first_redo is not None:
-                resume_cod_id = _cod_id_of(first_redo)
+                resume_cod_id = _archive_id_of(first_redo, id_mode)
                 if resume_cod_id is None:
                     raise RuntimeError(
-                        f"cannot parse the COD id of the first discarded phase "
+                        f"cannot parse the archive id of the first discarded phase "
                         f"{first_redo!r}; refusing to guess where to resume"
                     )
                 # ``resume_from_entry_id`` is a *stored* id (offset applied);
@@ -348,16 +386,16 @@ def build(
                 last_id = writer.conn.execute(
                     "SELECT entry_id FROM entries ORDER BY rowid DESC LIMIT 1"
                 ).fetchone()
-                next_cod_id = _cod_id_of(last_id[0]) if last_id else None
+                next_cod_id = _archive_id_of(last_id[0], id_mode) if last_id else None
                 if next_cod_id is None:
                     raise RuntimeError(
-                        f"cannot parse the COD id of the last stored phase "
+                        f"cannot parse the archive id of the last stored phase "
                         f"{last_id[0]!r}; refusing to guess where to resume"
                     )
                 start = max(int(start or 0), next_cod_id + 1 - int(id_offset))
                 logger.warning(
                     "resuming %s: %d phases already stored, walking the archive from "
-                    "COD id %d",
+                    "id %d",
                     out.name,
                     writer.resumed_from,
                     start,
@@ -371,10 +409,20 @@ def build(
     total = 0
     workers = max(1, int(workers))
 
-    tasks = (
-        (str(cif_path), cod_id)
-        for cod_id, cif_path in iter_cod_cifs(cif_root, start=start, limit=limit)
-    )
+    if id_mode == "mp":
+        from xinmatch.core.db.mp_scan import iter_mp_cifs
+
+        tasks = (
+            (str(cif_path), mp_id)
+            for mp_id, cif_path in iter_mp_cifs(cif_root, start=start, limit=limit)
+        )
+    elif id_mode == "cod":
+        tasks = (
+            (str(cif_path), cod_id)
+            for cod_id, cif_path in iter_cod_cifs(cif_root, start=start, limit=limit)
+        )
+    else:
+        raise ValueError(f"unknown id_mode {id_mode!r}; expected 'cod' or 'mp'")
 
     def _consume(results) -> None:
         nonlocal last_done
@@ -400,7 +448,7 @@ def build(
             if stats.entries % log_every == 0:
                 rate = stats.entries / max(time.perf_counter() - t0, 1e-9) * 60.0
                 logger.info(
-                    "built %d phases this run (%d in file, %.0f/min) last_cod_id=%d",
+                    "built %d phases this run (%d in file, %.0f/min) last_id=%d",
                     stats.entries, stats.entries_total, rate, last_done,
                 )
 
@@ -411,13 +459,13 @@ def build(
             with ProcessPoolExecutor(
                 max_workers=workers,
                 initializer=_init_worker,
-                initargs=(dmin, max_peaks, id_offset),
+                initargs=(dmin, max_peaks, id_offset, id_mode),
             ) as pool:
                 # imap keeps archive order, so the file does not depend on how
                 # the workers happen to interleave.
                 _consume(pool.map(_compute_one, tasks, chunksize=8))
         else:
-            _init_worker(dmin, max_peaks, id_offset)
+            _init_worker(dmin, max_peaks, id_offset, id_mode)
             _consume(map(_compute_one, tasks))
 
         # ``writer.close()`` writes the meta table inside the same transaction as
@@ -435,6 +483,14 @@ def build(
     )
     logger.info("build finished: %s", stats.as_dict())
     return stats
+
+
+def _archive_id_of(entry_id: str, id_mode: str) -> int | None:
+    """Recover the archive id from a stored entry id for the active id mode."""
+    if id_mode == "mp":
+        text = str(entry_id)
+        return int(text[3:]) if text.startswith("mp-") and text[3:].isdigit() else None
+    return _cod_id_of(entry_id)
 
 
 def _cod_id_of(entry_id: str) -> int | None:

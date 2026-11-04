@@ -125,8 +125,14 @@ CREATE TABLE element_inv (element TEXT PRIMARY KEY, eids BLOB);
 | COD | 1,000,005 | +0 | `96-100-0005` |
 | PCOD | 1,000,000 | +20,000,000 | `96-210-00000` |
 | TCOD | 10,000,001 | +100,000,000 | `96-110-000001` |
+| MP（外部库） | 862,690 | +0 | `mp-862690` |
 
 偏移不是装饰：PCOD 与 COD 共用 7 位数字空间，不偏移会让 `96-100-0000` 在两库中互相遮蔽。
+
+**外部库的 id 约定**：COD/PCOD/TCOD 之外的库可以保留自己的稳定标识，不必套 `96-` 前缀。
+Materials Project 库使用其原生 `mp-<number>`（`meta.library_kind = "MP"`、`data_date` 与文件名一致），
+号段 `[0, 20,000,000)`；`accept_xindb` 对 MP 要求 **id 集合与归档 `# mp-id:` 注释集合完全相等**
+（构建/验收见 [`MP-库构建与验收.md`](MP-库构建与验收.md)，代码 `mp_scan.py` / `build_mp_xindb.py`）。
 
 ---
 
