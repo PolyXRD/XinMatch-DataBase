@@ -94,6 +94,7 @@ python -m xinmatch.cli.main libraries --add D:\Project\XRD\XinMatch-DataBase\dat
 | `tools/build_mp_xindb.py` | MP 构建入口（`--data-date 20261031`） |
 | `tools/accept_xindb.py` | 新增 `MP` 号段、`mp-` id 解析与集合级归属校验（`--mp-root`） |
 | `tests/test_mp_scan.py` | MP 扫描 / id / 晶系 / 构建+验收回归 |
+| Release | [`20261031-mp`](https://github.com/PolyXRD/XinMatch-DataBase/releases/tag/20261031-mp)：`MP-20261031.xinDB.zip`（197,925,329 B，SHA-256 `d20c4a61…`）+ `SHA256SUMS.txt` |
 
 ```powershell
 # 复跑验收（只读）

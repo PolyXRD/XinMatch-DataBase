@@ -78,7 +78,8 @@ gemmi 读不到晶胞时用默认占位晶胞算出 `d=1.0` 假峰。用修复�
 > 与 `PCOD-Inorg` 实质等价（原始归档仅差 2 个未入库 CIF），按决定跳过。
 
 - **MP 外部库**：`data/MP-20261031.xinDB`（Materials Project，155,201 相，id 为原生 `mp-<n>`，
-  `tier=2` 计算结构）；XinMatch 通过「添加外部库」挂载。构建/验收见 [`docs/MP-库构建与验收.md`](docs/MP-库构建与验收.md)。
+  `tier=2` 计算结构）；XinMatch 通过「添加外部库」挂载。构建/验收见 [`docs/MP-库构建与验收.md`](docs/MP-库构建与验收.md)，
+  发布版 [`20261031-mp`](https://github.com/PolyXRD/XinMatch-DataBase/releases/tag/20261031-mp)（zip + `SHA256SUMS.txt`）。
 
 - 验收细节、坏相逐条清单与前后对比见 [`docs/ACCEPTANCE-20261101-rebuild.md`](docs/ACCEPTANCE-20261101-rebuild.md)。
 - **Release 已发布**：[`20261020-rebuild`](https://github.com/PolyXRD/XinMatch-DataBase/releases/tag/20261020-rebuild)（2026-11-04）含 5 个库的 zip + `SHA256SUMS.txt`；发布说明 [`docs/release-notes-20261104.md`](docs/release-notes-20261104.md)。打包命令：`python -m tools.package_release --out _release\<date>`（手册 §5）。
