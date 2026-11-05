@@ -47,6 +47,24 @@ CuKa1-1.5406-d0.7703-30.0-merge-mult-DW-norm1000
 > 按强度取前 100 条（见 PolyXRD-DataBase 仓库）。同一份 CIF 在两个库里算出的强度体系不同，
 > 库里各自的 `meta` 会记下口径，reader 发现未知口径必须拒绝加载而不是混算。
 
+### 2.1 实测峰表（`meta.peak_origin = observed`）
+
+上面那条冻结串描述的是**由 CIF 算峰**的库。ICDD PDF-2 这类**实测卡片库**没有算峰这一步，
+峰表是几十年文献里测出来的相对强度，套用计算口径就是让文件说谎。规范为此留了一个显式的
+开关：`meta.peak_origin`。
+
+| 项 | `computed`（缺省） | `observed` |
+|---|---|---|
+| 谁用 | COD / PCOD / TCOD / MP | ICDD PDF-2 |
+| `peak_convention` | 必须是 §2 的冻结串 | 必须以 `observed-` 开头，且含 `norm1000` |
+| 强度尺度 | I/I₀ × 1000 | **同左**（不共用一把尺子，两类库的打分权重就不可比） |
+| `entries` 里 NULL 晶胞 | 构建缺陷 | 数据事实（PDF-2 有 18.25% 的老卡片本就无晶胞） |
+| 峰数 > `max_peaks=150` | 引擎安全阀被绕过 | 数据事实（PDF-2 有 14.9% 超 150，最多 199） |
+| d 范围 | 由 §2 决定 | 源数据决定（PDF-2 实测 0.36–99.2 Å） |
+
+`peak_origin` 缺省按 `computed` 解释，所以既有库的判据不受影响。读取侧**不需要**关心这个
+字段（`reader_v3` 只校验 `schema_version`），只有验收器按它切换判据。
+
 ---
 
 ## 3. `entries`（每相一行）
@@ -165,6 +183,18 @@ Materials Project 库使用其原生 `mp-<number>`（`meta.library_kind = "MP"`�
 | `element_mask_scheme` | `iupac128-v1` | 位图方案名 |
 | `element_mask_unmapped` | `Ac:88;Au:78;…` | 位号 ≥ 63、装不进 `elem_mask` 的元素（仍完整存在于 `elements` 与 `element_inv`） |
 
+实测库（`peak_origin = observed`）另带：
+
+| 键 | 示例 | 说明 |
+|---|---|---|
+| `peak_origin` | `observed` | 峰是实测值而非计算值，见 §2.1 |
+| `peak_max` | `199` | 实际最大峰数；验收器用它自查，替代引擎的 `max_peaks=150` 上限 |
+| `peak_d_min` / `peak_d_max` | `0.36` / `99.2` | 实际 d 范围（源数据决定，不是 §2 的 0.7703–30） |
+| `dataset` | `PDF2-2004` | 数据集标识 |
+| `raw_file` / `raw_bytes` / `raw_sha256` | `C:\pdf2\pdf2.dat` / `587999120` / `e25b521c…` | 原始二进制溯源 |
+| `name_policy` | `mineral>compound` | `mineral_name` 列的填充策略（PDF-2 只有 10.8% 有矿物名） |
+| `reference_policy` | `coden-year-author (卷/页无列位，未落库)` | 文献字段的拆分与丢失声明 |
+
 ---
 
 ## 8. 校验（`tools/validate_xindb.py` / `tools/accept_xindb.py`）
@@ -174,7 +204,7 @@ Materials Project 库使用其原生 `mp-<number>`（`meta.library_kind = "MP"`�
 | 组 | 判据 |
 |---|---|
 | `S` schema | 3 张必需表 + 4 个索引存在 |
-| `M` meta | 必需键齐全；`peak_convention` 等于代码里的常量（不是副本）；`library_kind`/`data_date` 与文件名一致 |
+| `M` meta | 必需键齐全；`peak_convention` 与 `peak_origin` 自洽（`computed` 必须等于代码里的常量，`observed` 必须自报 `observed-*`+`norm1000`）；`library_kind`/`data_date` 与文件名一致 |
 | `C` chunk 记账 | `Σpeak_chunks.n` = `Σentries.n_peaks` = `entry_count`；块数 = `ceil(N/4096)`；`peak_off` 阶梯连续 |
 | `E` entry 合理性 | 晶胞/体积物理量合法；每相至少一个元素；`peak_n == n_peaks`；`n_peaks ≤ 150` |
 | `E5` 单峰坏相 | 穷举每个 chunk 的 `top_d[:,0]`（最强反射）：**最强反射 d 落在 λ/2 边界窗口、且其余峰强度和 < 5/1000（整谱已塌缩）→ FAIL**；`n_peaks==1` 且 d≈1.0 Å（gemmi 占位晶胞）→ FAIL；其它单峰正常 d → WARN |

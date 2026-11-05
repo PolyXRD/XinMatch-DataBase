@@ -250,8 +250,32 @@ def _check_meta(conn: sqlite3.Connection, rep: Report, db: Path) -> dict[str, st
     else:
         rep.ok("M1.keys", f"{len(META_KEYS) - 1} required keys populated")
 
+    # 峰数据的**来源**决定了下面好几条检查的口径：
+    #
+    # ``computed``（缺省，COD / PCOD / TCOD / MP）—— 峰由 CIF 算出，口径必须
+    #   与引擎常量逐字一致，否则说明「用 A 口径算、声称 B 口径」。
+    # ``observed``（ICDD PDF-2 这类实测卡片库）—— 库里没有算峰这一步，峰表是
+    #   文献实测值。此时若声称与引擎常量相同反而是**撒谎**，并且「晶胞缺失」
+    #   「峰数超过算峰引擎的安全阀」都是数据事实而非构建缺陷。
+    #
+    # 缺省按 computed 处理，老库的判据一个字都不用改。
+    origin = (meta.get("peak_origin") or "computed").strip().lower()
     stored = meta.get("peak_convention", "")
-    if stored == PEAK_CONVENTION:
+    if origin == "observed":
+        if not stored.startswith("observed-"):
+            rep.fail(
+                "M2.convention",
+                f"peak_origin=observed 但 peak_convention={stored!r} 没有 observed- 前缀"
+                "（实测峰表不得声称是计算口径）",
+            )
+        elif "norm1000" not in stored:
+            rep.fail(
+                "M2.convention",
+                f"peak_convention={stored!r} 未声明 norm1000，强度尺度不可比",
+            )
+        else:
+            rep.ok("M2.convention", f"{stored} (observed)")
+    elif stored == PEAK_CONVENTION:
         rep.ok("M2.convention", stored)
     else:
         rep.fail(
@@ -259,6 +283,7 @@ def _check_meta(conn: sqlite3.Connection, rep: Report, db: Path) -> dict[str, st
             f"stored {stored!r} != engine {PEAK_CONVENTION!r} (peaks were computed "
             "under a different cutoff than the file claims)",
         )
+    rep.info("M7.origin", f"peak_origin={origin}")
 
     # The file name carries the same identity, and ``multi_db`` picks the newest
     # snapshot by parsing it.  If the two disagree, the library will be loaded
@@ -386,13 +411,32 @@ def _check_entries(conn: sqlite3.Connection, rep: Report, meta: dict[str, str], 
         " coalesce(sum(CASE WHEN volume IS NULL OR volume <= 0 THEN 1 ELSE 0 END), 0),"
         " coalesce(sum(CASE WHEN alpha IS NULL OR alpha < 1 OR alpha > 179 THEN 1 ELSE 0 END), 0),"
         " coalesce(sum(CASE WHEN beta  IS NULL OR beta  < 1 OR beta  > 179 THEN 1 ELSE 0 END), 0),"
-        " coalesce(sum(CASE WHEN gamma IS NULL OR gamma < 1 OR gamma > 179 THEN 1 ELSE 0 END), 0)"
+        " coalesce(sum(CASE WHEN gamma IS NULL OR gamma < 1 OR gamma > 179 THEN 1 ELSE 0 END), 0),"
+        " coalesce(sum(CASE WHEN a IS NULL THEN 1 ELSE 0 END), 0)"
         " FROM entries",
         bounds,
     ).fetchone()
     labels = ("a", "b", "c", "volume", "alpha", "beta", "gamma")
-    bad = {lbl: int(v) for lbl, v in zip(labels, row, strict=True) if int(v)}
+    bad = {lbl: int(v) for lbl, v in zip(labels, row[:7], strict=True) if int(v)}
     total = int(conn.execute("SELECT count(*) FROM entries").fetchone()[0] or 0)
+
+    # 实测库（``peak_origin=observed``）的晶胞缺失是**数据事实**：ICDD PDF-2 的
+    # 老 Hanawalt 卡片（1930~50 年代）本来就没有晶胞，18.2% 缺失属正常，写哨兵
+    # 值才是错的。所以这里把「整行晶胞为 NULL」从缺陷计数里剔除，单独报 INFO；
+    # 计算库（COD 家族）维持原判据 —— 那里 NULL 晶胞只可能是构建漏了。
+    origin = (meta.get("peak_origin") or "computed").strip().lower()
+    null_cells = int(row[7]) if origin == "observed" else 0
+    if null_cells:
+        # 整行 NULL 的卡片的计数从每个列里扣掉（缺晶胞的卡片是「全缺」而不是
+        # 某几列缺，所以用同一个数扣），剩下的才是「有值但不物理」。
+        bad = {k: v - null_cells for k, v in bad.items()}
+        bad = {k: v for k, v in bad.items() if v > 0}
+        rep.info(
+            "E1.lattice",
+            f"{null_cells:,} entries carry no cell ({null_cells * 100.0 / total:.2f}%) "
+            "-- 实测卡片无晶胞，按数据事实保留 NULL",
+        )
+
     if bad:
         detail = ", ".join(f"{k}={v:,}" for k, v in bad.items())
         samples = [
@@ -415,7 +459,15 @@ def _check_entries(conn: sqlite3.Connection, rep: Report, meta: dict[str, str], 
         else:
             rep.warn("E1.lattice", msg)
     else:
-        rep.ok("E1.lattice", "all lattice parameters and volumes physical")
+        # 实测库刚在上一条 INFO 里报过「多少条没有晶胞」，这里的 PASS 只针对
+        # 「有值的那些是不是物理」，措辞要区分开，否则同一编号一 INFO 一 PASS
+        # 看起来像自相矛盾。
+        rep.ok(
+            "E1.lattice",
+            "every present lattice parameter and volume is physical"
+            if null_cells
+            else "all lattice parameters and volumes physical",
+        )
 
     empty = int(
         conn.execute(
@@ -449,7 +501,23 @@ def _check_entries(conn: sqlite3.Connection, rep: Report, meta: dict[str, str], 
     # per-phase storage cap: the peak table keeps up to DEFAULT_MAX_PEAKS lines
     # so a GUI can plot the full stick pattern.  Conflating the two would flag
     # every library as broken.
-    if max_peaks > DEFAULT_MAX_PEAKS:
+    #
+    # DEFAULT_MAX_PEAKS 是**算峰引擎的安全阀**（病态晶胞别把内存吃光）。实测
+    # 峰表没有引擎，峰数是 ICDD 卡片的事实：PDF-2 有 24,419 张卡（14.9%）超过
+    # 150 条、最多 199 条。拿引擎阈值去判它，等于要求删掉真实数据才能通过验收。
+    if origin == "observed":
+        declared = meta.get("peak_max", "")
+        if declared.isdigit() and int(declared) != max_peaks:
+            rep.fail(
+                "E4.max_peaks",
+                f"meta.peak_max={declared} 与实际最大峰数 {max_peaks} 不符",
+            )
+        else:
+            rep.ok(
+                "E4.max_peaks",
+                f"observed library, max {max_peaks}（不套算峰引擎上限 {DEFAULT_MAX_PEAKS}）",
+            )
+    elif max_peaks > DEFAULT_MAX_PEAKS:
         rep.fail(
             "E4.max_peaks",
             f"max n_peaks = {max_peaks} exceeds DEFAULT_MAX_PEAKS = {DEFAULT_MAX_PEAKS}",

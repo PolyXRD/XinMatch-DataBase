@@ -43,6 +43,17 @@ def main(argv: list[str]) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     names = args.names or sorted(p.name for p in data_dir.glob("*.xinDB"))
+    # ICDD PDF-2 是商品库，**永不进 Release**。默认 glob 会把不小心放进 data/
+    # 的 PDF2 库一起打进去，所以在默认路径上直接剔除；显式点名则说明使用者
+    # 知道自己在做什么，不再拦。
+    if not args.names:
+        licensed = [n for n in names if "PDF2" in n.upper()]
+        if licensed:
+            print(
+                f"[SKIP] 跳过 ICDD 授权库（不得发布）：{', '.join(licensed)}",
+                file=sys.stderr,
+            )
+            names = [n for n in names if n not in licensed]
     if not names:
         print(f"[ERR] no .xinDB under {data_dir}", file=sys.stderr)
         return 1

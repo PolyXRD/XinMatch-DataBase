@@ -129,6 +129,23 @@ CuKa1-1.5406-d0.7703-30.0-merge-mult-DW-norm1000
 > 同一份 CIF 在两个库里算出的绝对强度体系不同。**混用会得到系统性偏差**，
 > 不要拿 xinDB 的强度去校验 polyDB，反之亦然。
 
+### 实测峰表：`peak_origin = observed`
+
+上面那条口径描述的是**由 CIF 算峰**的库（COD / PCOD / TCOD / MP），它们的
+`meta.peak_origin` 缺省为 `computed`。ICDD PDF-2 这类**实测卡片库**不是算出来的，
+落库时刻意不套这条口径：
+
+| meta | 计算库 | 实测库（PDF-2） |
+|---|---|---|
+| `peak_origin` | `computed`（缺省） | `observed` |
+| `peak_convention` | `CuKa1-1.5406-…-norm1000` | `observed-ICDD-PDF2-2004-norm1000` |
+| 强度尺度 | norm-1000 | **同样是 norm-1000**（否则两类库的打分权重不可比） |
+| NULL 晶胞 / 峰数 >150 | 构建缺陷 | 数据事实 |
+
+读取侧不需要第二个 reader：`reader_v3` 只认 `schema_version == 3`。建库工具
+`tools/build_pdf2_xindb.py`，**ICDD 商品数据不进本仓库、不进 Release**，
+详见 [`docs/PDF2-库构建与验收.md`](docs/PDF2-库构建与验收.md)。
+
 ---
 
 ## 3. 从零构建
