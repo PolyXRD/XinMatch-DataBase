@@ -33,3 +33,6 @@ __pycache__/
 Thumbs.db
 desktop.ini
 ~$*
+
+# ── 本地探针 / 一次性 diff 与补丁清单 ──────────────────────
+.scratch/
