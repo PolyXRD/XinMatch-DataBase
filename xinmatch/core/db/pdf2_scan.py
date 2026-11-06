@@ -151,6 +151,7 @@ class Pdf2Card:
 
     card_id: str = ""
     formula: str = ""
+    formula_lines: list[str] = field(default_factory=list)
     formula_norm: str = ""
     name: str = ""
     mineral: str = ""
@@ -175,8 +176,27 @@ class Pdf2Card:
 
     @property
     def display_formula(self) -> str:
-        """优先返回原始写法的化学式，缺失时用规范化写法。"""
-        return self.formula or self.formula_norm
+        """优先返回原始写法的化学式；多行续写时改用规范经验式。
+
+        ICDD 的 ``X7`` 长化学式会跨多行（第一行常是经验式，后续行是结构式
+        展开或前一行的收尾括号）。旧实现用覆盖赋值，最终只留下 ``)2`` /
+        ``)0.43 ]n`` 这类尾巴 —— 库里因此出现「有式但抽不出元素」的相。
+        但**只在旧写法完全抽不出元素时**才改：全库约 16 K 张卡有多行 X7，
+        它们的原始结构式（``Bi ( C2 H3 O2 )3``）本来就能正确给出元素集，
+        换成规范式（``C6 H9 Bi O6``）会改变 ``same_phase`` 的组成比值，
+        且部分 X8 还漏元素（实测 PDF2-020087 丢 Er）。这类卡一律保持原样。
+
+        单行卡片的行为与旧实现逐位相同，避免影响已验收的 163 K 张卡。
+        """
+        legacy = self.formula or self.formula_norm
+        if len(self.formula_lines) <= 1 or elements_from_pdf2_formula(legacy):
+            return legacy
+        if self.formula_norm and elements_from_pdf2_formula(self.formula_norm):
+            return self.formula_norm
+        for line in self.formula_lines:
+            if elements_from_pdf2_formula(line):
+                return line
+        return legacy
 
     @property
     def cell_volume(self) -> float | None:
@@ -367,7 +387,8 @@ def parse_record(lines: Sequence[str], offset: int) -> Pdf2Card | None:
                 # 还没有主名称时兜底，避免俗名把主名称挤掉。
                 card.name = name
         elif code == "7":
-            card.formula = data.strip()
+            # 收集全部续行而不是覆盖：X7 允许跨行，旧实现只留最后一行。
+            card.formula_lines.append(data.strip())
         elif code == "8":
             card.formula_norm = data.strip()
         elif code == "9":
@@ -401,6 +422,10 @@ def parse_record(lines: Sequence[str], offset: int) -> Pdf2Card | None:
 
     if not card.card_id:
         return None
+    # 旧实现把每个 X7 行覆盖进 formula，最终值就是最后一行；这里逐位复现，
+    # 兼容判断全部交给 display_formula，避免改动任何已验收卡片的 formula。
+    if card.formula_lines:
+        card.formula = card.formula_lines[-1]
     if not card.formula and card.formula_norm:
         card.formula = card.formula_norm
     return card

@@ -134,6 +134,54 @@ def test_formula_falls_back_to_normalised_form() -> None:
     assert card.formula == "Ca C O3"
 
 
+def test_multiline_formula_uses_normalised_form() -> None:
+    """X7 跨行时不再只留 ``)2`` 尾巴；优先用 X8 的规范经验式。
+
+    真实反例 PDF2-020049：两行 X7，第二行只有 ``)2``，旧实现把 formula
+    覆盖成 ``)2``，元素倒排里这张卡完全不可见。
+    """
+    first = "( K , Ca , Na )0.84 ( Al Fe Mg ) ( Si , Al )4 O10 ( O H"
+    norm = "Al0.47 Fe0.66 H2 K0.84 Mg0.4 O12 Si4"
+    card = _parse(_line("", "1"), _line(first, "7"), _line(")2", "7"),
+                  _line(norm, "8"))
+    assert card.formula == ")2"          # 逐位复现旧实现的「最后一行」
+    assert card.formula_lines == [first, ")2"]
+    assert card.display_formula == norm
+    assert elements_from_pdf2_formula(card.display_formula) == [
+        "Al", "Fe", "H", "K", "Mg", "O", "Si"]
+
+
+def test_multiline_formula_with_parseable_legacy_is_untouched() -> None:
+    """旧式本来能抽出元素时必须保持原样，否则会改掉 ~16 K 张卡的组成比值。
+
+    真实反例 PDF2-010019：原始式 ``Bi ( C2 H3 O2 )3``、规范式
+    ``C6 H9 Bi O6``，两者元素集相同但化学计量不同；PDF2-020087 的 X8
+    甚至漏掉 Er。
+    """
+    first = "Bi ( C2 H3 O2 )3"
+    card = _parse(_line("", "1"), _line("", "7"), _line(first, "7"),
+                  _line("C6 H9 Bi O6", "8"))
+    assert card.formula == first
+    assert card.display_formula == first
+    assert elements_from_pdf2_formula(card.display_formula) == ["Bi", "C", "H", "O"]
+
+
+def test_multiline_formula_without_norm_falls_back_to_first_line() -> None:
+    """没有 X8 时退回第一行（经验式），而不是只剩右括号。"""
+    first = "[ C22 H12 O7 ( C4 H8 O )x ]n"
+    card = _parse(_line("", "1"), _line(first, "7"), _line(")x ]n", "7"))
+    assert card.display_formula == first
+    assert elements_from_pdf2_formula(card.display_formula) == ["C", "H", "O"]
+
+
+def test_single_line_formula_is_unchanged() -> None:
+    """单行 X7 的行为与修复前逐位相同（163 K 张卡不受影响）。"""
+    card = _parse(_line("", "1"), _line("Al2 O3", "7"), _line("Al2 O3", "8"))
+    assert card.formula == "Al2 O3"
+    assert card.formula_lines == ["Al2 O3"]
+    assert card.display_formula == "Al2 O3"
+
+
 def test_missing_card_number_returns_none() -> None:
     """第 71 列起没有合法标记（缺 6 位卡片号）时不计为一张卡片。"""
     assert parse_record([_line("", "1", card="")], 0) is None
