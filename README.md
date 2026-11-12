@@ -1,359 +1,413 @@
 # XinMatch-DataBase
 
-**XinMatch 参考物相库（`.xinDB` v3 格式）的构建代码、格式规范与发布产物。**
+**Build code, format specification and release artifacts for the XinMatch reference phase database (`.xinDB` v3 format).**
 
-本仓库只放**代码与文档**；数据库本体以 [Releases](../../releases) 里的压缩包分发
-（单库 68 MB / 87 MB / 1.3 GB，不入 git 历史）。数据源为
-[Crystallography Open Database (COD)](http://www.crystallography.net/cod/) 及其预测/理论子库
-PCOD / TCOD，本仓库不做结构精修、不改写原始 CIF，只做反射计算与索引打包。
+This repository contains **only code and documentation**; the database itself is distributed as
+compressed packages in [Releases](../../releases) (68 MB / 87 MB / 1.3 GB per database, not
+committed to git history). The data sources are
+[Crystallography Open Database (COD)](http://www.crystallography.net/cod/) and its
+predicted/theoretical sub-databases PCOD / TCOD; this repository does not perform structure
+refinement or rewrite the original CIFs, and only performs reflection calculation and index packaging.
 
-> 姊妹仓库 [PolyXRD-DataBase](https://github.com/PolyXRD/PolyXRD-DataBase) 发布的是同源数据的
-> **polyDB** 格式（PolyXRD 用）。**两种格式口径不同，不可互换**（见 §2）。
+> The sister repository [PolyXRD-DataBase](https://github.com/PolyXRD/PolyXRD-DataBase) publishes
+> the **polyDB** format of the same source data (used by PolyXRD). **The two formats have different
+> conventions and are not interchangeable** (see §2).
 
 ---
 
-## 0. 构建位置约定（2026-10-24 起，必读）
+## 0. Build location convention (effective 2026-10-24, required reading)
 
-| 项 | 约定 |
+| Item | Convention |
 |---|---|
-| **数据库在哪里构建** | **本仓库 `XinMatch-DataBase`**（不再散落在其它 checkout）。 |
-| **构建所需 CIF 在哪里** | 上级目录的 **`sync-COD`**：`D:\Project\XRD\sync-COD`（可用 `XRD_DATA_ROOT` 覆盖）。本仓库不携带原始 CIF。 |
-| **产物默认位置** | `<本仓库>/data/<Kind>-<YYYYMMDD>.xinDB`；`--out` 最高优先，`XINMATCH_XINDB_DIR` 仅显式覆盖。 |
-| **支持范围** | **6 个库**：`COD` / `PCOD` / `TCOD` × `Inorg`（无机子集）/ `Full`（全库）。 |
-| **完整操作手册** | [`docs/构建与验收手册.md`](docs/构建与验收手册.md)（构建矩阵、验收命令、发布检查清单、故障排查）。 |
+| **Where the database is built** | **In this repository, `XinMatch-DataBase`** (no longer scattered across other checkouts). |
+| **Where the CIFs needed for the build are** | The parent directory's **`sync-COD`**: `D:\Project\XRD\sync-COD` (can be overridden with `XRD_DATA_ROOT`). This repository does not carry the original CIFs. |
+| **Default artifact location** | `<this repository>/data/<Kind>-<YYYYMMDD>.xinDB`; `--out` has the highest priority, `XINMATCH_XINDB_DIR` overrides only when explicitly set. |
+| **Supported scope** | **6 databases**: `COD` / `PCOD` / `TCOD` × `Inorg` (inorganic subset) / `Full` (full database). |
+| **Complete operations manual** | [Build and acceptance handbook (Chinese)](docs/构建与验收手册.md) (build matrix, validation commands, release checklist, troubleshooting). |
 
-**一条链**：`sync-COD（CIF）→ ①scan_inorg（仅 Inorg 需要）→ ②build（本仓库 data/）→ ③validate → ④accept/专项复核`。
+**One chain**: `sync-COD (CIF) → ①scan_inorg (only needed for Inorg) → ②build (this repository's data/) → ③validate → ④accept/special review`.
 
 ---
 
-## 1. 发布产物（Release `20261020`）
+## 1. Release artifacts (Release `20261020`)
 
-> 本仓库现在支持 **6 个库**（`COD/PCOD/TCOD × Inorg/Full`）。`20261020` 这次 Release 实际发布的是
-> **三个 Inorg 库**（下表的 COD/PCOD/TCOD-Inorg）；三个 `*-Full` 库已可用同一套命令构建
-> （见 §3.3 与构建手册），但体量与耗时是小时级，尚未纳入本次 Release。
+> This repository now supports **6 databases** (`COD/PCOD/TCOD × Inorg/Full`). The `20261020`
+> Release actually publishes **three Inorg databases** (COD/PCOD/TCOD-Inorg in the table below);
+> the three `*-Full` databases can already be built with the same set of commands (see §3.3 and the
+> build manual), but their size and build time are on the order of hours, so they are not included in
+> this Release.
 
-| 库 | entry_id 段 | 相数 | 反射数 | 块数 | 元素 | 解压后 | zip |
+| Database | entry_id range | Phase count | Reflection count | Chunk count | Elements | Uncompressed | zip |
 |---|---|---|---|---|---|---|---|
-| **COD-Inorg** | `96-100-*` | 78,036 | 9,394,774 | 20 | 96 种 | 118,710,272 B（113.2 MiB） | **87.2 MiB**（91,484,834 B） |
-| **PCOD-Inorg** | `96-210-*` | 1,061,953 | 159,274,265 | 260 | 19 种 | 1,776,353,280 B（1694.1 MiB） | **1.35 GiB**（1,447,251,707 B） |
-| **TCOD-Inorg** | `96-110-*` | 46,846 | 5,874,790 | 12 | 91 种 | 71,352,320 B（68.0 MiB） | **54.1 MiB**（56,694,762 B） |
-| **合计** | — | **1,186,835** | **174,543,829** | 292 | — | 1.83 GiB | ≈1.52 GiB |
+| **COD-Inorg** | `96-100-*` | 78,036 | 9,394,774 | 20 | 96 kinds | 118,710,272 B (113.2 MiB) | **87.2 MiB** (91,484,834 B) |
+| **PCOD-Inorg** | `96-210-*` | 1,061,953 | 159,274,265 | 260 | 19 kinds | 1,776,353,280 B (1694.1 MiB) | **1.35 GiB** (1,447,251,707 B) |
+| **TCOD-Inorg** | `96-110-*` | 46,846 | 5,874,790 | 12 | 91 kinds | 71,352,320 B (68.0 MiB) | **54.1 MiB** (56,694,762 B) |
+| **Total** | — | **1,186,835** | **174,543,829** | 292 | — | 1.83 GiB | ≈1.52 GiB |
 
-- 三个库**互不包含，按需装**（XinMatch 支持多库挂载）。COD 实验库是日常交互检索的主力；
-  PCOD（GRINSP 预测）与 TCOD（理论）用于"实验库查不到时兜底"。
-- 命名里的 `20261020` 是**源数据快照日**（`meta.data_date`），不是构建日；
-  构建时刻见 `meta.build_time`（COD 2026-10-21 17:25、TCOD 2026-10-22 23:29、PCOD 2026-10-22 23:46）。
-- 分发版全部 `journal_mode=DELETE`，无 `-wal`/`-shm` 侧车，可直接放只读介质
-  （NAS 只读共享、光盘镜像）而不必担心"读也要写权限"。
-- 校验值见 Release 附带的 `SHA256SUMS.txt`。
+- The three databases are **mutually exclusive, install as needed** (XinMatch supports mounting
+  multiple databases). The COD experimental database is the workhorse for everyday interactive
+  search; PCOD (GRINSP predictions) and TCOD (theoretical) serve as a "fallback when the
+  experimental database finds nothing".
+- The `20261020` in the name is the **source data snapshot date** (`meta.data_date`), not the build
+  date; build times are in `meta.build_time` (COD 2026-10-21 17:25, TCOD 2026-10-22 23:29,
+  PCOD 2026-10-22 23:46).
+- All distributed versions use `journal_mode=DELETE`, with no `-wal`/`-shm` sidecars, so they can
+  be placed directly on read-only media (NAS read-only shares, disc images) without worrying about
+  "read also requiring write permission".
+- Checksum values are in the `SHA256SUMS.txt` attached to the Release.
 
 ```bash
-unzip COD-Inorg-20261020.xinDB.zip                    # 得到 COD-Inorg-20261020.xinDB
-python -m tools.validate_xindb COD-Inorg-20261020.xinDB   # 可选：自检 25 项
+unzip COD-Inorg-20261020.xinDB.zip                    # get COD-Inorg-20261020.xinDB
+python -m tools.validate_xindb COD-Inorg-20261020.xinDB   # optional: 25-item self-check
 ```
 
-> 本机已把三个库放在仓库的 `data/` 下（`data/COD-Inorg-20261020.xinDB` 等，不入 git），
-> XinMatch 的库注册表 `~/.xinmatch/libraries.json` 已指向该目录。
+> On this machine the three databases are already placed under the repository's `data/`
+> (`data/COD-Inorg-20261020.xinDB`, etc., not committed to git), and XinMatch's library registry
+> `~/.xinmatch/libraries.json` already points to that directory.
 
-> ⚠️ 文件名必须是 `<library_kind>-<data_date>.xinDB`，否则 `validate_xindb` 的
-> `M3.identity` 会判 FAIL（它拿文件名和 `meta` 对账）。改名后重新建库即可，不必修 meta。
+> ⚠️ The file name must be `<library_kind>-<data_date>.xinDB`, otherwise `validate_xindb`'s
+> `M3.identity` will report FAIL (it reconciles the file name against `meta`). After renaming, just
+> rebuild the database; there is no need to fix meta.
 
-### 1.1 2026-11-01 重建（峰引擎修复后，`data/` 内本地产物）
+### 1.1 2026-11-01 rebuild (after the peak-engine fix, local artifacts in `data/`)
 
-2026-10 修复了两类「假峰相」：2θ=180° 边界（`d=λ/2`）反射被浮点舍入放进峰表 + LP 发散导致整谱塌缩；
-gemmi 读不到晶胞时用默认占位晶胞算出 `d=1.0` 假峰。用修复后的引擎重建三个 Inorg 库，
-**源快照仍为 `20261020`**（`meta.data_date` 不变）。重建前的旧库曾放在 `data/_prev/` 做逐条目对比，
-**验收完成后已于 2026-11-04 删除**（对比结果保留在验收报告中）：
+In 2026-10 two classes of "spurious-peak phases" were fixed: the 2θ=180° boundary (`d=λ/2`)
+reflection that floating-point rounding put into the peak table + LP divergence collapsing the whole
+pattern; and the `d=1.0` spurious peak computed from a default placeholder cell when gemmi cannot
+read the cell. The three Inorg databases were rebuilt with the fixed engine,
+**the source snapshot is still `20261020`** (`meta.data_date` unchanged). The pre-rebuild old
+databases were once placed in `data/_prev/` for entry-by-entry comparison and
+**were deleted on 2026-11-04 after acceptance was complete** (the comparison results are kept in the
+acceptance report):
 
-| 库 | 相数 | 反射数 | 体积（字节） | SHA-256（前 16） | 验收 |
+| Database | Phase count | Reflection count | Size (bytes) | SHA-256 (first 16) | Acceptance |
 |---|---|---|---|---|---|
-| **COD-Inorg**（重建） | **78,035** | **9,395,681** | **118,640,640**（113.1 MiB） | `7C08B34DCACA9BAC…` | validate 0F/1W（30 项）；accept 0F/1W；7 条坏相修复、1 条无晶胞相剔除 |
-| **TCOD-Inorg**（重建） | **46,846** | **5,874,790** | **71,352,320**（68.0 MiB） | `8F2A25D583B577A7…` | validate 0F/1W（29 项）；accept 0F/1W；与旧库逐条目 `(d,i)` **完全相同** |
-| **PCOD-Inorg**（重建） | **1,061,953** | **159,275,318** | **1,777,357,376**（1694.1 MiB） | `ABB7EC8C1E68CD6F…` | validate 0F/1W（29 项）；accept 0F/1W；7 条坏相修复；17/1,061,953 条载荷变化 |
-| **TCOD-Full**（新库） | **361,701** | **53,099,238** | **623,173,632**（594.3 MiB） | `36838FBE1F18EDBF…` | validate 0F/2W（29 项）；accept 0F/1W；与 TCOD-Inorg 公共相 46,846/46,846 逐字节相同；自重召回 10/10 |
-| **COD-Full**（新库） | **532,038** | **77,458,154** | **922,120,192**（879.4 MiB） | `E217F28FA03755A1…` | validate 0F/2W（30 项）；accept 0F/2W（20 项）；与 COD-Inorg 公共相 78,035/78,035 逐字节相同；自重召回 10/10 |
-| **MP**（外部库） | **155,201** | **20,900,193** | **251,633,664**（240.0 MiB） | `26D7A9BED83A57C0…` | validate 0F/1W（29 项）；accept 0F/1W（19 项）；id 集合与归档 155,201 个 `mp-id` 完全相等；自重召回 Top-1/Top-5 20/20 |
+| **COD-Inorg** (rebuilt) | **78,035** | **9,395,681** | **118,640,640** (113.1 MiB) | `7C08B34DCACA9BAC…` | validate 0F/1W (30 items); accept 0F/1W; 7 bad phases fixed, 1 phase without a cell removed |
+| **TCOD-Inorg** (rebuilt) | **46,846** | **5,874,790** | **71,352,320** (68.0 MiB) | `8F2A25D583B577A7…` | validate 0F/1W (29 items); accept 0F/1W; entry-by-entry `(d,i)` **exactly identical** to the old database |
+| **PCOD-Inorg** (rebuilt) | **1,061,953** | **159,275,318** | **1,777,357,376** (1694.1 MiB) | `ABB7EC8C1E68CD6F…` | validate 0F/1W (29 items); accept 0F/1W; 7 bad phases fixed; 17/1,061,953 payloads changed |
+| **TCOD-Full** (new database) | **361,701** | **53,099,238** | **623,173,632** (594.3 MiB) | `36838FBE1F18EDBF…` | validate 0F/2W (29 items); accept 0F/1W; 46,846/46,846 phases common with TCOD-Inorg byte-for-byte identical; self-recall 10/10 |
+| **COD-Full** (new database) | **532,038** | **77,458,154** | **922,120,192** (879.4 MiB) | `E217F28FA03755A1…` | validate 0F/2W (30 items); accept 0F/2W (20 items); 78,035/78,035 phases common with COD-Inorg byte-for-byte identical; self-recall 10/10 |
+| **MP** (external database) | **155,201** | **20,900,193** | **251,633,664** (240.0 MiB) | `26D7A9BED83A57C0…` | validate 0F/1W (29 items); accept 0F/1W (19 items); id set exactly equal to the archived 155,201 `mp-id`s; self-recall Top-1/Top-5 20/20 |
 
-> **PCOD-Full 不构建**：PCOD 归档 1,061,962 条 CIF **全部为无机**（manifest `is_inorg=1` 100%），
-> 与 `PCOD-Inorg` 实质等价（原始归档仅差 2 个未入库 CIF），按决定跳过。
+> **PCOD-Full is not built**: the 1,061,962 CIFs in the PCOD archive are **all inorganic**
+> (manifest `is_inorg=1` 100%), essentially equivalent to `PCOD-Inorg` (the original archive differs
+> by only 2 CIFs not ingested); it is skipped by decision.
 
-- **MP 外部库**：`data/MP-20261031.xinDB`（Materials Project，155,201 相，id 为原生 `mp-<n>`，
-  `tier=2` 计算结构）；XinMatch 通过「添加外部库」挂载。构建/验收见 [`docs/MP-库构建与验收.md`](docs/MP-库构建与验收.md)，
-  发布版 [`20261031-mp`](https://github.com/PolyXRD/XinMatch-DataBase/releases/tag/20261031-mp)（zip + `SHA256SUMS.txt`）。
+- **MP external database**: `data/MP-20261031.xinDB` (Materials Project, 155,201 phases, ids are
+  native `mp-<n>`, `tier=2` computed structures); XinMatch mounts it via "Add external database".
+  For build/acceptance see [MP database build and acceptance (Chinese)](docs/MP-库构建与验收.md), published release
+  [`20261031-mp`](https://github.com/PolyXRD/XinMatch-DataBase/releases/tag/20261031-mp)
+  (zip + `SHA256SUMS.txt`).
 
-- 验收细节、坏相逐条清单与前后对比见 [`docs/ACCEPTANCE-20261101-rebuild.md`](docs/ACCEPTANCE-20261101-rebuild.md)。
-- **Release 已发布**：[`20261020-rebuild`](https://github.com/PolyXRD/XinMatch-DataBase/releases/tag/20261020-rebuild)（2026-11-04）含 5 个库的 zip + `SHA256SUMS.txt`；发布说明 [`docs/release-notes-20261104.md`](docs/release-notes-20261104.md)。打包命令：`python -m tools.package_release --out _release\<date>`（手册 §5）。
-- 重建前的 `data/_prev/` 旧库（COD 113 MB + TCOD 68 MB + PCOD 1.7 GB）**已于 2026-11-04 删除**；旧 `20261020` Release（含三个含坏相的 Inorg zip）也已删除，仅保留本重建版 Release。
+- For acceptance details, the per-phase bad-phase list and before/after comparison see
+  [`docs/ACCEPTANCE-20261101-rebuild.md`](docs/ACCEPTANCE-20261101-rebuild.md).
+- **Release published**: [`20261020-rebuild`](https://github.com/PolyXRD/XinMatch-DataBase/releases/tag/20261020-rebuild)
+  (2026-11-04) contains zips for 5 databases + `SHA256SUMS.txt`; release notes
+  [`docs/release-notes-20261104.md`](docs/release-notes-20261104.md). Packaging command:
+  `python -m tools.package_release --out _release\<date>` (manual §5).
+- The pre-rebuild old databases in `data/_prev/` (COD 113 MB + TCOD 68 MB + PCOD 1.7 GB)
+  **were deleted on 2026-11-04**; the old `20261020` Release (containing the three Inorg zips with
+  bad phases) was also deleted, leaving only this rebuilt Release.
 
 ---
 
-## 2. `.xinDB` 是什么
+## 2. What `.xinDB` is
 
-**单文件 SQLite**，把"预筛矩阵"和"全反射表"分开存，反射数据只存一份：
+**A single-file SQLite** database that stores the "pre-screening matrix" and the "full reflection table" separately, with the reflection data stored only once:
 
 ```
 COD-Inorg-20261020.xinDB
-├── meta          自描述 key/value（峰口径、建库参数、追溯）
-├── entries       每相一行（化学式/空间群/晶胞/密度/元素 + CSR 偏移）
-├── peak_chunks   列式反射块（每 4096 相一块）
-└── element_inv   元素倒排（element → 0 起相序号，uint32 数组）
+├── meta          self-describing key/value (peak convention, build parameters, traceability)
+├── entries       one row per phase (chemical formula / space group / cell / density / elements + CSR offsets)
+├── peak_chunks   columnar reflection chunks (one chunk per 4096 phases)
+└── element_inv   element inverted index (element → 0-based phase index, uint32 array)
 ```
 
-| 段 | 形状 | 类型 | 用途 |
+| Segment | Shape | Type | Purpose |
 |---|---|---|---|
-| `top_d`/`top_i` | `n × 32` | `<f4` | 预筛：与测量峰窗口做 NumPy 交叠，**只剪枝不排序** |
-| `all_d`/`all_i` | `Σpeak_n`（CSR） | `<f4` | 打分：候选相的全部反射 |
-| `element_inv.eids` | 变长 | `<u4` | 升序去重、0 起相序号 |
+| `top_d`/`top_i` | `n × 32` | `<f4` | pre-screening: NumPy overlap with the measured-peak window, **prune only, no sorting** |
+| `all_d`/`all_i` | `Σpeak_n` (CSR) | `<f4` | scoring: all reflections of the candidate phase |
+| `element_inv.eids` | variable length | `<u4` | ascending, deduplicated, 0-based phase index |
 
-**寻址铁律**：`entries.rowid` 显式从 0 写入 = 0 起相序号；`element_inv.eids` 与
-`peak_chunks` 块号都基于它，**不能**用 `entry_id` 反推。
-完整字段级规范见 [`docs/xinDB格式规范-v3.md`](docs/xinDB格式规范-v3.md)。
+**The iron rule for addressing**: `entries.rowid` is explicitly written starting from 0 = the
+0-based phase index; `element_inv.eids` and the `peak_chunks` chunk number are both based on it, and
+**must not** be derived backwards from `entry_id`.
+For the complete field-level specification see [xinDB v3 format specification (Chinese)](docs/xinDB格式规范-v3.md).
 
-### 峰口径（写死进 `meta.peak_convention`）
+### Peak convention (hard-coded into `meta.peak_convention`)
 
 ```
 CuKa1-1.5406-d0.7703-30.0-merge-mult-DW-norm1000
 ```
 
-λ=1.5406 Å（Cu Kα1）｜d 0.7703–30.0 Å｜等价反射按 2θ 合并（含多重性）｜
-**含 Debye-Waller**（`B = 8π²U_iso`，逐位点）｜强度归一 1000｜每相最多 150 条反射｜预筛宽 32
+λ=1.5406 Å (Cu Kα1)｜d 0.7703–30.0 Å｜equivalent reflections merged by 2θ (including multiplicity)｜
+**includes Debye-Waller** (`B = 8π²U_iso`, per site)｜intensity normalized to 1000｜at most 150 reflections per phase｜pre-screening width 32
 
-| | xinDB（本仓库） | polyDB（PolyXRD-DataBase） |
+| | xinDB (this repository) | polyDB (PolyXRD-DataBase) |
 |---|---|---|
-| 容器 | 单文件 SQLite | 目录（8 个段文件 + mmap） |
-| d 范围 | 0.7703–30 Å | 1.0–26 Å（2θ 5–100.76°） |
-| 温度因子 | **有**（Debye-Waller） | 无 |
-| 每相峰数 | 150 | 100（按强度取前 K） |
-| 定位 | 检索 + 精修一体化 | GUI 交互检索 |
+| Container | single-file SQLite | directory (8 segment files + mmap) |
+| d range | 0.7703–30 Å | 1.0–26 Å (2θ 5–100.76°) |
+| Temperature factor | **yes** (Debye-Waller) | no |
+| Peaks per phase | 150 | 100 (top K by intensity) |
+| Positioning | search + refinement integrated | GUI interactive search |
 
-> 同一份 CIF 在两个库里算出的绝对强度体系不同。**混用会得到系统性偏差**，
-> 不要拿 xinDB 的强度去校验 polyDB，反之亦然。
+> The same CIF yields different absolute intensity systems in the two databases. **Mixing them
+> produces systematic deviations**; do not use xinDB intensities to validate polyDB, or vice versa.
 
-### 实测峰表：`peak_origin = observed`
+### Measured peak tables: `peak_origin = observed`
 
-上面那条口径描述的是**由 CIF 算峰**的库（COD / PCOD / TCOD / MP），它们的
-`meta.peak_origin` 缺省为 `computed`。ICDD PDF-2 这类**实测卡片库**不是算出来的，
-落库时刻意不套这条口径：
+The convention above describes databases **whose peaks are computed from CIFs**
+(COD / PCOD / TCOD / MP), whose `meta.peak_origin` defaults to `computed`. **Measured card
+databases** such as ICDD PDF-2 are not computed; when ingested they deliberately do not follow this
+convention:
 
-| meta | 计算库 | 实测库（PDF-2） |
+| meta | Computed databases | Measured databases (PDF-2) |
 |---|---|---|
-| `peak_origin` | `computed`（缺省） | `observed` |
+| `peak_origin` | `computed` (default) | `observed` |
 | `peak_convention` | `CuKa1-1.5406-…-norm1000` | `observed-ICDD-PDF2-2004-norm1000` |
-| 强度尺度 | norm-1000 | **同样是 norm-1000**（否则两类库的打分权重不可比） |
-| NULL 晶胞 / 峰数 >150 | 构建缺陷 | 数据事实 |
+| Intensity scale | norm-1000 | **also norm-1000** (otherwise the scoring weights of the two kinds of databases would not be comparable) |
+| NULL cell / peak count >150 | build defect | data fact |
 
-读取侧不需要第二个 reader：`reader_v3` 只认 `schema_version == 3`。建库工具
-`tools/build_pdf2_xindb.py`，**ICDD 商品数据不进本仓库、不进 Release**，
-详见 [`docs/PDF2-库构建与验收.md`](docs/PDF2-库构建与验收.md)。
+The read side does not need a second reader: `reader_v3` only recognizes `schema_version == 3`.
+Build tool `tools/build_pdf2_xindb.py`; **ICDD commercial data does not enter this repository or any
+Release**, see [PDF2 database build and acceptance (Chinese)](docs/PDF2-库构建与验收.md) for details.
 
 ---
 
-## 3. 从零构建
+## 3. Building from scratch
 
-### 3.1 环境
+### 3.1 Environment
 
-| 依赖 | 要求 | 说明 |
+| Dependency | Requirement | Notes |
 |---|---|---|
-| Python | 3.10+ | 实测 3.10.11 |
-| numpy | 必需 | 反射计算与列式打包 |
-| gemmi | **必需** | CIF 解析（`peak_compute` 硬依赖） |
-| 磁盘 | ≈ 2× 库体积 | PCOD 库 1.7 GB，构建峰值约 4 GB |
-| 内存 | 8 GB 级 | 分块写入，不吃满反射表 |
+| Python | 3.10+ | tested on 3.10.11 |
+| numpy | required | reflection calculation and columnar packaging |
+| gemmi | **required** | CIF parsing (hard dependency of `peak_compute`) |
+| Disk | ≈ 2× the database size | PCOD database 1.7 GB, build peaks at about 4 GB |
+| Memory | 8 GB class | chunked writes, does not fully consume the reflection table |
 
 ```bash
 pip install numpy gemmi
 ```
 
-### 3.2 CIF 归档与无机子集
+### 3.2 CIF archives and the inorganic subset
 
-代码不下载数据。链路是：**原始归档 → 无机子集 → `.xinDB`**。
+The code does not download data. The chain is: **original archive → inorganic subset → `.xinDB`**.
 
-**源数据不在本仓库**，2026-10-23 起统一放在 `D:/Project/XRD/sync-COD`（与
-[PolyXRD-DataBase](https://github.com/PolyXRD/PolyXRD-DataBase) 共用，
-数据侧工具与布局说明见 [PolyXRD/sync-COD](https://github.com/PolyXRD/sync-COD)）：
+**The source data is not in this repository**; as of 2026-10-23 it is kept in one place at
+`D:/Project/XRD/sync-COD` (shared with
+[PolyXRD-DataBase](https://github.com/PolyXRD/PolyXRD-DataBase); for data-side tools and layout notes
+see [PolyXRD/sync-COD](https://github.com/PolyXRD/sync-COD)):
 
 ```
-D:/Project/XRD/sync-COD/       ← 数据根，可用环境变量 XRD_DATA_ROOT 覆盖
-├── COD/        535,166 个 CIF  # 全库原始归档（层级 3）
-├── PCOD/     1,061,964 个 CIF  # GRINSP 预测（层级 2）
-├── TCOD/       362,294 个 CIF  # 理论（层级 3，8 位 id）
-├── inorg_cif/COD|PCOD|TCOD/    # ← 第 ① 步产物：判为无机的 CIF 副本（79,198 / 1,061,962 / 46,943）
-└── inorg_manifest.sqlite       # ← 第 ① 步产物：每文件一行清单（1,959,421 行，id_clash=0）
+D:/Project/XRD/sync-COD/       ← data root, can be overridden with the XRD_DATA_ROOT environment variable
+├── COD/        535,166 CIFs   # full-database original archive (level 3)
+├── PCOD/     1,061,964 CIFs   # GRINSP predictions (level 2)
+├── TCOD/       362,294 CIFs   # theoretical (level 3, 8-digit id)
+├── inorg_cif/COD|PCOD|TCOD/    # ← step ① output: CIF copies judged inorganic (79,198 / 1,061,962 / 46,943)
+└── inorg_manifest.sqlite       # ← step ① output: one-line-per-file manifest (1,959,421 rows, id_clash=0)
 ```
 
-第 ① 步（无机判定 = "不含 C，或含 C 但不含 H" + 复制 + 清单）：
+Step ① (inorganic classification = "no C, or containing C but no H" + copy + manifest):
 
 ```bash
-python tools/scan_inorg.py --workers 6          # 缺省就地读写上面的数据根
-XRD_DATA_ROOT=/other/root python tools/scan_inorg.py --workers 6   # 换盘时覆盖
+python tools/scan_inorg.py --workers 6          # by default reads/writes the data root above in place
+XRD_DATA_ROOT=/other/root python tools/scan_inorg.py --workers 6   # override when switching disks
 ```
 
-- 判据、id 偏移（PCOD +2e7 / TCOD +1e8）与本仓库已发布的三库**逐条一致**（脚本原样沿用）。
-- 已发布库用的 `inorg_cif/` 现状就在 `D:\Project\XRD\sync-COD\inorg_cif\`（1,188,103 个 CIF，
-  与 polyDB 共用）。本仓库不带这批数据，也不必带 —— 只读引用即可。
-- 建库时 `--cif-root` 缺省指向 `xinmatch/core/db/cif_scan.py` 的 `DEFAULT_INORG_*_ROOT`，
-  后者由 `XRD_DATA_ROOT` 推导（缺省即 `D:\Project\XRD\sync-COD\inorg_cif\*`）。
-  换机器**用环境变量或 `--cif-root` 指过去**，不必改代码。
+- The criteria and id offsets (PCOD +2e7 / TCOD +1e8) are **entry-by-entry identical** to the three
+  databases already published by this repository (the script is reused verbatim).
+- The `inorg_cif/` used by the published databases is currently at
+  `D:\Project\XRD\sync-COD\inorg_cif\` (1,188,103 CIFs, shared with polyDB). This repository does
+  not carry this batch of data and does not need to — read-only reference is enough.
+- During a build, `--cif-root` defaults to the `DEFAULT_INORG_*_ROOT` in
+  `xinmatch/core/db/cif_scan.py`, which is derived from `XRD_DATA_ROOT` (default is
+  `D:\Project\XRD\sync-COD\inorg_cif\*`). When switching machines, **point to it via the environment
+  variable or `--cif-root`**; no need to change the code.
 
-### 3.3 建库（六个库，统一入口）
+### 3.3 Building the databases (six databases, unified entry point)
 
-`python -m tools.build_cod_xindb` 是唯一构建入口：`--source {COD,PCOD,TCOD}` × `--set {inorg,full}`，
-CIF 根 / `library_kind` / id 偏移自动推导；`tools/build_cod_inorg_xindb.py` 是它的薄兼容包装。
+`python -m tools.build_cod_xindb` is the only build entry point: `--source {COD,PCOD,TCOD}` ×
+`--set {inorg,full}`, with the CIF root / `library_kind` / id offset derived automatically;
+`tools/build_cod_inorg_xindb.py` is a thin compatibility wrapper around it.
 
 ```bash
-# 三个无机库（交互检索默认库，体积小、构建快）
+# Three inorganic databases (default databases for interactive search, small and quick to build)
 python -m tools.build_cod_xindb --source COD  --set inorg --data-date 20261020 --workers 14 -v
 python -m tools.build_cod_xindb --source PCOD --set inorg --data-date 20261020 --workers 14 -v
 python -m tools.build_cod_xindb --source TCOD --set inorg --data-date 20261020 --workers 14 -v
 
-# 三个全库（exhaustive reference；耗时小时级，见手册 §3.6）
+# Three full databases (exhaustive reference; takes hours, see manual §3.6)
 python -m tools.build_cod_xindb --source COD  --set full --data-date 20261020 --workers 14 -v
 python -m tools.build_cod_xindb --source PCOD --set full --data-date 20261020 --workers 14 -v
 python -m tools.build_cod_xindb --source TCOD --set full --data-date 20261020 --workers 14 -v
 ```
 
-- 输出默认 `<repo>/data/<kind>-<data_date>.xinDB`；`--out` 指定任意路径，`XINMATCH_XINDB_DIR` 仅显式覆盖。
-- `--limit N` 先试产（**永远先跑切片并 validate 全绿再跑全量**）；`--resume` 断点续跑（== 一次跑完，已验证）；
-  `--start` 从指定号段起；`--workers` 与输出无关（1 vs 2 逐字节一致，有回归）。
-- **`--workers` 用 14（本机 8C/16T 真实全库实测最优）**：TCOD 46,846 相 15.2 min（旧实现 14 workers 为 16.9 min）；
-  COD 用 8 workers 跑 61.6 min，反而略慢于历史 14 workers 的 58 min —— 500 相切片基准会低估多 worker 的收益，
-  不要据此把 workers 降到 8。
-- 构建热路径用 `build_pipeline.compute_phase()`，**每个 CIF 只解析一次**（旧实现 3 次解析 + 2 次结构构建）；
-  结构因子分块按原子数自适应（256–8192 行），两项优化**输出逐位不变**，整库吞吐约 +10–15%（详见手册 §3.7）。
-- 源码默认 `max_peaks=150`、`dmin=0.7703`（= λ/2），要改峰口径请同时改
-  `peak_compute.PEAK_CONVENTION`，否则 `meta` 与实际不符、校验器会拦。
-- `--kind full|inorg` 仅为 COD 的向后兼容别名（与 `--set` 同给会报错）。
+- Output defaults to `<repo>/data/<kind>-<data_date>.xinDB`; `--out` specifies any path,
+  `XINMATCH_XINDB_DIR` overrides only when explicitly set.
+- `--limit N` for a trial build first (**always run a slice and get validate fully green before
+  running the full build**); `--resume` resumes from a breakpoint (== equivalent to a single full
+  run, verified); `--start` starts from a specified number range; `--workers` is unrelated to the
+  output (1 vs 2 is byte-for-byte identical, with regression tests).
+- **Use `--workers` 14 (optimal measured on this machine's 8C/16T on real full databases)**:
+  TCOD 46,846 phases in 15.2 min (the old implementation with 14 workers took 16.9 min);
+  COD with 8 workers ran 61.6 min, slightly slower than the historical 58 min with 14 workers —
+  the 500-phase slice benchmark underestimates the benefit of more workers, so do not lower workers
+  to 8 on that basis.
+- The build hot path uses `build_pipeline.compute_phase()`, **parsing each CIF only once** (the old
+  implementation parsed 3 times + built the structure twice); structure-factor chunking adapts to the
+  atom count (256–8192 rows), and both optimizations **leave the output bit-for-bit unchanged**,
+  raising whole-database throughput by about +10–15% (see manual §3.7 for details).
+- The source defaults are `max_peaks=150`, `dmin=0.7703` (= λ/2); if you change the peak convention,
+  change `peak_compute.PEAK_CONVENTION` at the same time, otherwise `meta` will not match reality and
+  the validator will block it.
+- `--kind full|inorg` is only a backward-compatibility alias for COD (giving it together with
+  `--set` raises an error).
 
-### 3.4 实测规模（2026-11-01 重建后）
+### 3.4 Measured scale (after the 2026-11-01 rebuild)
 
-| 库 | 相数 | 反射数 | 平均峰/相 | 文件 | 构建耗时（14 workers 基准） |
+| Database | Phase count | Reflection count | Avg peaks/phase | File | Build time (14 workers benchmark) |
 |---|---|---|---|---|---|
-| COD-Inorg | **78,035** | **9,395,681** | 120.4（min 2 / max 150） | **113.1 MiB** | 61.6 min（`--workers 8`；14 workers 应更快） |
-| PCOD-Inorg | **1,061,953** | **159,275,318** | 150.0（min 20 / max 150） | **1694.1 MiB** | **13.3 h**（旧实现 12.7 h；期间有外部任务抢占） |
-| TCOD-Inorg | **46,846** | **5,874,790** | 125.4（min 3 / max 150） | **68.0 MiB** | **15.2 min**（旧实现 16.9 min） |
-| TCOD-Full | **361,701** | **53,099,238** | 146.8（min 3 / max 150） | **594.3 MiB** | **12.1 h**（499.3 相/分钟，14 workers） |
-| COD-Full | **532,038** | **77,458,154** | 145.6（min 1 / max 150） | **879.4 MiB** | **36.4 h**（243.7 相/分钟，14 workers） |
-| MP（外部库） | **155,201** | **20,900,193** | 134.7（min 8 / max 150） | **240.0 MiB** | **9.0 min**（17,318 相/分钟，14 workers） |
+| COD-Inorg | **78,035** | **9,395,681** | 120.4 (min 2 / max 150) | **113.1 MiB** | 61.6 min (`--workers 8`; 14 workers should be faster) |
+| PCOD-Inorg | **1,061,953** | **159,275,318** | 150.0 (min 20 / max 150) | **1694.1 MiB** | **13.3 h** (old implementation 12.7 h; external tasks contended during the run) |
+| TCOD-Inorg | **46,846** | **5,874,790** | 125.4 (min 3 / max 150) | **68.0 MiB** | **15.2 min** (old implementation 16.9 min) |
+| TCOD-Full | **361,701** | **53,099,238** | 146.8 (min 3 / max 150) | **594.3 MiB** | **12.1 h** (499.3 phases/min, 14 workers) |
+| COD-Full | **532,038** | **77,458,154** | 145.6 (min 1 / max 150) | **879.4 MiB** | **36.4 h** (243.7 phases/min, 14 workers) |
+| MP (external database) | **155,201** | **20,900,193** | 134.7 (min 8 / max 150) | **240.0 MiB** | **9.0 min** (17,318 phases/min, 14 workers) |
 
-> 旧实现单进程约 1,590 相/分钟（COD 切片）；2026-10 的单次解析 + 自适应分块优化后整库吞吐约 +10–15%，
-> 详见 [`docs/构建与验收手册.md`](docs/构建与验收手册.md) §3.7。
+> The old implementation did about 1,590 phases/min single-process (COD slice); after the 2026-10
+> single-pass parse + adaptive chunking optimization, whole-database throughput rose by about
+> +10–15%; see [Build and acceptance handbook (Chinese)](docs/构建与验收手册.md) §3.7 for details.
 
 ---
 
-## 4. 校验
+## 4. Validation
 
 ```bash
 python -m tools.validate_xindb data/COD-Inorg-20261020.xinDB --json tmp/validate.json
 python -m tools.validate_xindb data/PCOD-Inorg-20261020.xinDB --json tmp/validate-pcod.json
-python -m tools.validate_xindb data/COD-Inorg-20261020.xinDB --all-chunks   # 发布前全块解码
+python -m tools.validate_xindb data/COD-Inorg-20261020.xinDB --all-chunks   # full-chunk decode before release
 ```
 
-只读、只用公开 schema，判据组：`S` 表/索引齐全，`M` meta 完整且与文件名一致，
-`C` 块记账（`Σpeak_n` = `Σn_peaks` = `entry_count`、块数 = `ceil(N/4096)`、`peak_off` 连续），
-`E` 晶胞物理量 / 元素非空 / `n_peaks ≤ 150` / **`E5` 单峰坏相（180° 边界、占位晶胞）** / **`E6` 空相**，
-`P` 抽样或全块解码 + norm-1000 + 零填充 + `top⊆all`，`X` 元素倒排值域/升序/自洽。
+Read-only, using only the public schema; criteria groups: `S` tables/indexes complete, `M` meta
+complete and consistent with the file name, `C` chunk accounting (`Σpeak_n` = `Σn_peaks` =
+`entry_count`, chunk count = `ceil(N/4096)`, `peak_off` contiguous), `E` cell physical quantities /
+elements non-empty / `n_peaks ≤ 150` / **`E5` single-peak bad phases (180° boundary, placeholder
+cell)** / **`E6` empty phases**, `P` sampled or full-chunk decoding + norm-1000 + zero padding +
+`top⊆all`, `X` element inverted index value range / ascending order / self-consistency.
 
-发布前另跑 **`tools/accept_xindb.py`**（6 库通用的来源/载荷/坏相验收）与两份专项复核：
+Before release also run **`tools/accept_xindb.py`** (source/payload/bad-phase acceptance common to
+all 6 databases) and two special reviews:
 
 ```bash
 python -m tools.accept_xindb data/COD-Inorg-20261020.xinDB \
     --manifest D:/Project/XRD/sync-COD/inorg_manifest.sqlite --json tmp/accept.json
-python -m tools._compare_xindb_peaks.py <旧库> <新库>          # 只改元数据没动物理
-python -m tools._verify_resume_equivalence                     # --resume 等价于一次跑完
+python -m tools._compare_xindb_peaks.py <old database> <new database>          # only metadata changed, physics untouched
+python -m tools._verify_resume_equivalence                     # --resume is equivalent to a single full run
 ```
 
-> ✅ **2026-11-01/02 已用修复后的引擎重建三个 Inorg 库**：
-> COD 8 条坏相全部清除（7 恢复真峰、1 条无晶胞相剔除，相数 78,036→78,035，9,395,681 反射）；
-> PCOD 7 条坏相全部清除（159,275,318 反射，仅 17/1,061,953 条载荷变化）；
-> TCOD 无坏相且峰载荷逐字节不变。三库 `validate_xindb --all-chunks` 与 `accept_xindb` 均 **0 FAIL**。
-> **TCOD-Full 与 COD-Full 均已建成并验收**：TCOD-Full 361,701 相 / 53,099,238 反射；
-> COD-Full 532,038 相 / 77,458,154 反射（36.4 h）；两者与对应 Inorg 库的公共相**逐字节相同**。
-> 更早的 `20261020` Release（COD 8 / PCOD 7 条坏相）**已于 2026-11-04 删除**，仅保留重建版 `20261020-rebuild`。
-> 若手头仍有旧的 Inorg zip，请勿使用，改用重建版。
-> 详见 [`docs/ACCEPTANCE-20261101-rebuild.md`](docs/ACCEPTANCE-20261101-rebuild.md)。
+> ✅ **The three Inorg databases were rebuilt with the fixed engine on 2026-11-01/02**:
+> all 8 COD bad phases cleared (7 recovered real peaks, 1 phase without a cell removed, phase count
+> 78,036→78,035, 9,395,681 reflections);
+> all 7 PCOD bad phases cleared (159,275,318 reflections, only 17/1,061,953 payloads changed);
+> TCOD had no bad phases and its peak payloads are byte-for-byte unchanged. All three databases'
+> `validate_xindb --all-chunks` and `accept_xindb` are **0 FAIL**.
+> **TCOD-Full and COD-Full have both been built and accepted**: TCOD-Full 361,701 phases /
+> 53,099,238 reflections; COD-Full 532,038 phases / 77,458,154 reflections (36.4 h); the phases
+> common with the corresponding Inorg databases are **byte-for-byte identical**.
+> The earlier `20261020` Release (COD 8 / PCOD 7 bad phases) **was deleted on 2026-11-04**, leaving
+> only the rebuilt `20261020-rebuild`.
+> If you still have old Inorg zips on hand, do not use them; switch to the rebuilt version.
+> See [`docs/ACCEPTANCE-20261101-rebuild.md`](docs/ACCEPTANCE-20261101-rebuild.md) for details.
 
 ---
 
-## 5. 目录结构
+## 5. Directory structure
 
 ```
 .
-├── _atomic_scattering_params.json Cromer-Mann 系数（fastxrd 按 tools/../ 找它）
-├── data/                          **本地产物目录**（不入仓）：重建后 5 库（3 Inorg + 2 Full）+ 构建日志
-├── pytest.ini  tests/             工具链回归测试（合成 CIF/归档，不依赖 1.8 GiB 真实库）
-├── tmp/                           本地试产/bench/验收 JSON（不入仓，.gitignore）
-├── xinmatch/                      **构库子集**（完整程序见 PolyXRD/XinMatch）
-│   ├── __init__.py                空壳，避免把 scipy/GUI 拖进构建链路
+├── _atomic_scattering_params.json Cromer-Mann coefficients (fastxrd finds it via tools/../)
+├── data/                          **local artifact directory** (not committed): after the rebuild, 5 databases (3 Inorg + 2 Full) + build logs
+├── pytest.ini  tests/             toolchain regression tests (synthetic CIFs/archives, independent of the 1.8 GiB real databases)
+├── tmp/                           local trial builds / bench / acceptance JSON (not committed, .gitignore)
+├── xinmatch/                      **build subset** (full program in PolyXRD/XinMatch)
+│   ├── __init__.py                empty shell, to avoid dragging scipy/GUI into the build chain
 │   └── core/db/
-│       ├── cif_meta.py            CIF 元数据提取（化学式/空间群/晶胞/密度/元素）
-│       ├── cif_scan.py            CIF 归档扫描 + 六库源注册表（SOURCE/SUBSET/id 偏移）
-│       ├── peak_compute.py        反射计算 + 峰口径常量（含 Debye-Waller / 边界与占位胞修复）
-│       ├── build_pipeline.py      构建热路径：compute_phase() 单次解析（meta+峰表）
-│       ├── schema_v3.py           v3 DDL / 必需表 / 必需 meta 键
-│       ├── writer_v3.py           分块列式写入器 + element_inv 重建
-│       └── data/atomic_scattering_params.json   Cromer-Mann 系数（99 元素）
-├── tools/                         四步链路，索引见 tools/README.md
-│   ├── scan_inorg.py              ① 无机分类 + 副本 + 清单（XRD_DATA_ROOT 决定根目录）
-│   ├── cif_common.py              ① 的判据实现（parse_elements / is_inorganic / formula_mass）
-│   ├── fastcif.py  fastxrd.py     ① 依赖的 CIF 解析 / 反射计算
-│   ├── build_cod_xindb.py         ② **唯一构建入口**：--source × --set（6 库）+ resume
-│   ├── build_cod_inorg_xindb.py   ② 薄兼容包装（默认 inorg）
-│   ├── _bench_build.py            ② 构建吞吐基准（旧两步 vs 单次解析、workers/chunksize）
-│   ├── validate_xindb.py          ③ 只读结构验收器（S/M/C/E/P/X，含 E5/E6）
-│   ├── accept_xindb.py            ④ 6 库通用验收（id 号段/来源/元素/载荷/坏相）
-│   ├── _compare_xindb_peaks.py    ④ 峰载荷逐块比对（证明只改元数据没动物理）
-│   └── _verify_resume_equivalence.py ④ 证明 --resume 等价于一次跑完
+│       ├── cif_meta.py            CIF metadata extraction (chemical formula / space group / cell / density / elements)
+│       ├── cif_scan.py            CIF archive scan + six-database source registry (SOURCE/SUBSET/id offsets)
+│       ├── peak_compute.py        reflection calculation + peak convention constants (with Debye-Waller / boundary and placeholder-cell fixes)
+│       ├── build_pipeline.py      build hot path: compute_phase() single-pass parse (meta + peak table)
+│       ├── schema_v3.py           v3 DDL / required tables / required meta keys
+│       ├── writer_v3.py           chunked columnar writer + element_inv rebuild
+│       └── data/atomic_scattering_params.json   Cromer-Mann coefficients (99 elements)
+├── tools/                         four-step chain, index in tools/README.md
+│   ├── scan_inorg.py              ① inorganic classification + copies + manifest (XRD_DATA_ROOT determines the root directory)
+│   ├── cif_common.py              ① implementation of the criteria (parse_elements / is_inorganic / formula_mass)
+│   ├── fastcif.py  fastxrd.py     ① CIF parsing / reflection calculation dependencies
+│   ├── build_cod_xindb.py         ② **only build entry point**: --source × --set (6 databases) + resume
+│   ├── build_cod_inorg_xindb.py   ② thin compatibility wrapper (default inorg)
+│   ├── _bench_build.py            ② build throughput benchmark (old two-step vs single-pass parse, workers/chunksize)
+│   ├── validate_xindb.py          ③ read-only structure validator (S/M/C/E/P/X, including E5/E6)
+│   ├── accept_xindb.py            ④ acceptance common to all 6 databases (id range / source / elements / payload / bad phases)
+│   ├── _compare_xindb_peaks.py    ④ chunk-by-chunk peak-payload comparison (proves only metadata changed, physics untouched)
+│   └── _verify_resume_equivalence.py ④ proves --resume is equivalent to a single full run
 └── docs/
-    ├── 构建与验收手册.md           **构建/验收/发布检查清单（权威入口）**
-    └── xinDB格式规范-v3.md        字段级规范（容器/寻址/各段/meta/校验）
+    ├── 构建与验收手册.md           **build/acceptance/release checklist (authoritative entry point)**
+    └── xinDB格式规范-v3.md        field-level specification (container / addressing / segments / meta / validation)
 ```
 
-`xinmatch/` 是**裁剪子集**：只保留构库用到的模块，`__init__.py` 换成空壳
-（完整版会 `import scipy` 等，构库不需要）。其余检索/精修/GUI 模块见完整版仓库。
+`xinmatch/` is a **trimmed subset**: it keeps only the modules used for building databases, and
+`__init__.py` is replaced with an empty shell (the full version does `import scipy`, etc., which the
+build does not need). The remaining search/refinement/GUI modules are in the full repository.
 
-不入仓（`.gitignore`）：`data/ *.xinDB *.db *.sqlite tmp/ _release/ __pycache__/`。
-本机 `data/` 当前放着重建后的 5 个库（COD-Inorg 113.1 MB / TCOD-Inorg 68.0 MB / PCOD-Inorg 1694.1 MB /
-TCOD-Full 594.3 MB / COD-Full 879.4 MB）与 `data/_build-*.log`；`data/_prev/` 旧库已于 2026-11-04 删除。
+Not committed (`.gitignore`): `data/ *.xinDB *.db *.sqlite tmp/ _release/ __pycache__/`.
+This machine's `data/` currently holds the rebuilt 5 databases (COD-Inorg 113.1 MB /
+TCOD-Inorg 68.0 MB / PCOD-Inorg 1694.1 MB / TCOD-Full 594.3 MB / COD-Full 879.4 MB) and
+`data/_build-*.log`; the old databases in `data/_prev/` were deleted on 2026-11-04.
 
 ---
 
-## 6. 已知缺口
+## 6. Known gaps
 
-| 项 | 现状 | 影响 |
+| Item | Current state | Impact |
 |---|---|---|
-| **重建前旧库的坏相** | 旧 `20261020` Release：COD 8 条、PCOD 7 条、TCOD 0 条 | 用旧峰引擎构建；**2026-11-01/02 重建后三个 Inorg 库均已 0 条**。旧 Release 及其 Inorg zip 已于 2026-11-04 删除，仅保留重建版 |
-| 半塌缩边界相（WARN） | COD 2,251 / PCOD 5,598（重建后）/ TCOD 1,670 条：最强线落在 d≈λ/2（2θ→180°），其余峰存在（强度和 ≥5/1000） | 真实反射 + LP 在 180° 发散导致的**峰口径边缘现象**，不是假峰，**重建也不会消除**；根治需改峰口径（`DEFAULT_DMIN` 抬到 0.78–0.79 Å 或剔除 2θ>179°，属 v4 决策）。当前仅 WARN，不阻塞发布 |
-| 退化晶胞 | 重建后 COD 库已无（`96-210-4629` 源 CIF 无晶胞 → 建库时剔除） | — |
-| 无空间群 | COD 库 126 条（重建前 127，`96-210-4629` 已剔除；`E3` 仅提示） | 不影响峰位；按空间群过滤时这类相会被排除 |
-| 全库发布 | **TCOD-Full 与 COD-Full 均已建成并验收**（TCOD 361,701 相 / 53,099,238 反射 / 594.3 MiB；COD 532,038 相 / 77,458,154 反射 / 879.4 MiB；均 validate/accept 0 FAIL，与对应 Inorg 公共相逐字节相同）；`PCOD-Full` 与 `PCOD-Inorg` 等价（PCOD 全无机），不构建 | 建好后 XinMatch 会通过内置 `xindb_tcod_full` / `xindb_cod_full` 行自动发现；TCOD-Full 48,732 相、COD-Full 81,284 相的元素超出 63 位 `elem_mask`（`element_inv` 仍完整） |
-| 全库发布 | **构建已支持** 6 库（`--source × --set`）；`20261020` release 只发布了 Inorg 三库 | 有机/全库检索需先构建 `*-Full` 库（耗时小时级，见构建手册 §3.6） |
-| PCOD 元素面窄 | 只有 19 种元素（O/Si/P/Al/V/S/B/F…） | GRINSP 预测集的客观构成，不是建库丢数据 |
-| `top_i` 为 float32 | 强度用 `<f4` 而非量化整数 | 体积换精度；norm-1000 下有效位足够 |
+| **Bad phases in the pre-rebuild old databases** | old `20261020` Release: COD 8, PCOD 7, TCOD 0 | built with the old peak engine; **after the 2026-11-01/02 rebuild all three Inorg databases are at 0**. The old Release and its Inorg zips were deleted on 2026-11-04, leaving only the rebuilt version |
+| Semi-collapsed boundary phases (WARN) | COD 2,251 / PCOD 5,598 (after rebuild) / TCOD 1,670 entries: the strongest line falls at d≈λ/2 (2θ→180°), other peaks exist (intensity sum ≥5/1000) | a **peak-convention edge phenomenon** caused by a real reflection + LP diverging at 180°, not a spurious peak, and **rebuilding will not eliminate it**; a real fix requires changing the peak convention (raising `DEFAULT_DMIN` to 0.78–0.79 Å or dropping 2θ>179°, a v4 decision). Currently only a WARN, does not block release |
+| Degenerate cell | no longer present in the rebuilt COD database (source CIF of `96-210-4629` has no cell → removed during build) | — |
+| No space group | 126 entries in the COD database (127 before the rebuild, `96-210-4629` removed; `E3` only gives a hint) | does not affect peak positions; such phases are excluded when filtering by space group |
+| Full-database release | **TCOD-Full and COD-Full have both been built and accepted** (TCOD 361,701 phases / 53,099,238 reflections / 594.3 MiB; COD 532,038 phases / 77,458,154 reflections / 879.4 MiB; both validate/accept 0 FAIL, phases common with the corresponding Inorg databases byte-for-byte identical); `PCOD-Full` is equivalent to `PCOD-Inorg` (PCOD is all inorganic), so it is not built | once built, XinMatch auto-discovers them via the built-in `xindb_tcod_full` / `xindb_cod_full` rows; in TCOD-Full 48,732 phases and COD-Full 81,284 phases have elements exceeding the 63-bit `elem_mask` (`element_inv` is still complete) |
+| Full-database release | **building already supports** 6 databases (`--source × --set`); the `20261020` release published only the three Inorg databases | organic/full-database search requires first building the `*-Full` databases (takes hours, see build manual §3.6) |
+| Narrow PCOD element range | only 19 elements (O/Si/P/Al/V/S/B/F…) | the objective composition of the GRINSP prediction set, not data lost during the build |
+| `top_i` is float32 | intensity uses `<f4` rather than quantized integers | size traded for precision; under norm-1000 the significant digits are sufficient |
 
 ---
 
-## 7. 数据来源与许可
+## 7. Data sources and licensing
 
-- **代码**：沿 XinMatch 的双许可（学术非商业 / 商业另议），见 `LICENSE`、`LICENSE-CN`。
-- **数据**：CIF 内容版权归 COD 及各原始文献作者。使用本仓库产物请遵守
-  [COD 的使用条款](http://www.crystallography.net/cod/) 并引用 COD 与相应原始文献；
-  PCOD（GRINSP 预测）、TCOD（理论）条目另有其原始出处。本仓库只分发**派生索引**
-  （反射位置/强度/元数据），不改写也不替代原始 CIF。
-- 强度为**计算值**，含 Debye-Waller 但无仪器/样品展宽，与实验卡片（ICDD PDF）仍有偏差；
-  用于物相识别足够，用于定量须自行标定。
+- **Code**: follows XinMatch's dual license (academic non-commercial / commercial by separate
+  agreement), see `LICENSE`, `LICENSE-CN`.
+- **Data**: CIF content copyright belongs to COD and the authors of the original literature. When
+  using this repository's artifacts, please comply with
+  [COD's terms of use](http://www.crystallography.net/cod/) and cite COD and the corresponding
+  original literature; PCOD (GRINSP predictions) and TCOD (theoretical) entries have their own
+  original sources. This repository distributes only **derived indexes**
+  (reflection positions/intensities/metadata); it does not rewrite or replace the original CIFs.
+- Intensities are **computed values**, including Debye-Waller but with no instrumental/sample
+  broadening, so they still deviate from experimental cards (ICDD PDF); sufficient for phase
+  identification; for quantitative analysis you must calibrate yourself.
 
-## 8. 版本
+## 8. Version history
 
-| 日期 | 事件 |
+| Date | Event |
 |---|---|
-| 2026-10-21 / 22 | `COD-Inorg`、`TCOD-Inorg`、`PCOD-Inorg` 三库建成（xinDB v3） |
-| 2026-10-23 | 本仓库建立并发布 `20261020` release（代码 + 三个 zip）；COD 库 `journal_mode` 由 WAL 归一为 DELETE，`integrity_check` 复核通过 |
-| 2026-10-23 | 三个库从 `PolyXRD-DataBase/xindb/` 迁到本仓库 `data/`；补入无机分类（①）与两份专项复核（④）工具，链路自足 |
-| 2026-10-23 | **源数据迁出** → `D:/Project/XRD/sync-COD`（两库共用），`XRD_DATA_ROOT` 缺省改为该路径；`build_dbs.py` 剥成纯函数模块 `cif_common.py`（旧 3COD sqlite 打包器删除） |
-| 2026-10-23 | 数据侧工具独立成公开仓库 [**PolyXRD/sync-COD**](https://github.com/PolyXRD/sync-COD)（数据仍不入库） |
-| 2026-10-24 | **构库/验收工具重建**：统一六库构建入口（`--source × --set`，含 PCOD/TCOD Full）；新增 `build_pipeline.compute_phase()` 单次解析；新增 `accept_xindb.py` 通用验收与 `E5/E6` 坏相检查；建立 `tests/` 回归（合成 CIF，不依赖真实库）；新增 [`docs/构建与验收手册.md`](docs/构建与验收手册.md) 并记录「库在本仓库构建、CIF 源在 `sync-COD`」约定 |
-| 2026-11-01 | **用修复后的峰引擎重建三个 Inorg 库**（源快照仍 `20261020`）：COD 78,036→**78,035** 相 / 9,395,681 反射（8 条坏相清除）；TCOD 46,846 相、峰载荷与旧库逐字节相同；PCOD 1,061,953 相 / 159,275,318 反射（7 条坏相清除）；三库均 validate/accept **0 FAIL**。见 [`docs/ACCEPTANCE-20261101-rebuild.md`](docs/ACCEPTANCE-20261101-rebuild.md) |
-| 2026-11-02 | 开始构建 **TCOD-Full**（362,294 源 CIF）与 **COD-Full**（535,166 源 CIF）；`PCOD-Full` 因 PCOD 全为无机、与 `PCOD-Inorg` 等价而跳过 |
-| 2026-11-02 | **TCOD-Full 建成并验收**：361,701 相 / 53,099,238 反射 / 623,173,632 B / 12.1 h；validate 0F/2W、accept 0F/1W；与 TCOD-Inorg 公共相 46,846/46,846 逐字节相同；自重召回 10/10。COD-Full 构建中 |
-| 2026-11-04 | **COD-Full 建成并验收**：532,038 相 / 77,458,154 反射 / 922,120,192 B / **36.4 h**；validate 0F/2W、accept 0F/2W（`bad_phase_ids=0`）；与 COD-Inorg 公共相 78,035/78,035 逐字节相同；自重召回 10/10。5 库（3 Inorg + 2 Full）全部完成，PCOD-Full 等价跳过 |
-| 2026-11-04 | **MP-20261031 外部库建成并验收**（Materials Project，155,204 CIF）：155,201 相 / 20,900,193 反射 / 251,633,664 B / 9.0 min；`mp-<n>` id，validate 0F/1W、accept 0F/1W（id 集合与归档完全一致）；自重召回 20/20。见 [`docs/MP-库构建与验收.md`](docs/MP-库构建与验收.md) |
+| 2026-10-21 / 22 | `COD-Inorg`, `TCOD-Inorg`, `PCOD-Inorg` databases built (xinDB v3) |
+| 2026-10-23 | this repository created and the `20261020` release published (code + three zips); COD database `journal_mode` normalized from WAL to DELETE, `integrity_check` re-checked and passed |
+| 2026-10-23 | the three databases moved from `PolyXRD-DataBase/xindb/` to this repository's `data/`; added inorganic classification (①) and two special-review (④) tools, making the chain self-contained |
+| 2026-10-23 | **source data moved out** → `D:/Project/XRD/sync-COD` (shared by both databases), `XRD_DATA_ROOT` default changed to that path; `build_dbs.py` stripped into the pure-function module `cif_common.py` (old 3COD sqlite packager deleted) |
+| 2026-10-23 | data-side tools spun off into the public repository [**PolyXRD/sync-COD**](https://github.com/PolyXRD/sync-COD) (data still not committed) |
+| 2026-10-24 | **build/acceptance tools reworked**: unified six-database build entry point (`--source × --set`, including PCOD/TCOD Full); added `build_pipeline.compute_phase()` single-pass parse; added `accept_xindb.py` generic acceptance and `E5/E6` bad-phase checks; established `tests/` regressions (synthetic CIFs, independent of real databases); added [Build and acceptance handbook (Chinese)](docs/构建与验收手册.md) and recorded the convention "databases are built in this repository, CIF sources are in `sync-COD`" |
+| 2026-11-01 | **rebuilt the three Inorg databases with the fixed peak engine** (source snapshot still `20261020`): COD 78,036→**78,035** phases / 9,395,681 reflections (8 bad phases cleared); TCOD 46,846 phases, peak payloads byte-for-byte identical to the old database; PCOD 1,061,953 phases / 159,275,318 reflections (7 bad phases cleared); all three validate/accept **0 FAIL**. See [`docs/ACCEPTANCE-20261101-rebuild.md`](docs/ACCEPTANCE-20261101-rebuild.md) |
+| 2026-11-02 | began building **TCOD-Full** (362,294 source CIFs) and **COD-Full** (535,166 source CIFs); `PCOD-Full` skipped because PCOD is entirely inorganic and equivalent to `PCOD-Inorg` |
+| 2026-11-02 | **TCOD-Full built and accepted**: 361,701 phases / 53,099,238 reflections / 623,173,632 B / 12.1 h; validate 0F/2W, accept 0F/1W; 46,846/46,846 phases common with TCOD-Inorg byte-for-byte identical; self-recall 10/10. COD-Full build in progress |
+| 2026-11-04 | **COD-Full built and accepted**: 532,038 phases / 77,458,154 reflections / 922,120,192 B / **36.4 h**; validate 0F/2W, accept 0F/2W (`bad_phase_ids=0`); 78,035/78,035 phases common with COD-Inorg byte-for-byte identical; self-recall 10/10. All 5 databases (3 Inorg + 2 Full) complete, PCOD-Full skipped as equivalent |
+| 2026-11-04 | **MP-20261031 external database built and accepted** (Materials Project, 155,204 CIFs): 155,201 phases / 20,900,193 reflections / 251,633,664 B / 9.0 min; `mp-<n>` ids, validate 0F/1W, accept 0F/1W (id set exactly matches the archive); self-recall 20/20. See [MP database build and acceptance (Chinese)](docs/MP-库构建与验收.md) |
